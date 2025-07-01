@@ -12,7 +12,7 @@ export default function Login() {
     e.preventDefault();
     const { error } = await supabase.auth.signInWithPassword(form);
     if (error) setError(error.message);
-    else nav('/');
+    else nav('/', { replace: true });
   };
 
   return (

@@ -6,8 +6,10 @@ import Login from './pages/Login';
 import type { JSX } from 'react';
 
 function PrivateRoute({ children }: { children: JSX.Element }) {
-  const { session } = useAuth();
-  return session ? children : <Navigate to="/login" />;
+  const { session, loading } = useAuth();
+
+  if (loading) return null;                 // or a spinner component
+  return session ? children : <Navigate to="/login" replace />;
 }
 
 export default function App() {
