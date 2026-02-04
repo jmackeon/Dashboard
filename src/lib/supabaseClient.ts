@@ -7,4 +7,20 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase env variables – check .env.local');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+console.log("SUPABASE URL:", import.meta.env.VITE_SUPABASE_URL);
+console.log("ANON starts:", (import.meta.env.VITE_SUPABASE_ANON_KEY || "").slice(0, 20));
+
+
+export const supabase = createClient(
+  supabaseUrl,
+  supabaseAnonKey,
+  {
+    auth: {
+      flowType: "pkce",
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  }
+);
+

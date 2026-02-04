@@ -1,91 +1,147 @@
-// src/pages/Login.tsx
-import { useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "../lib/supabaseClient";
 
 export default function Login() {
   const nav = useNavigate();
-  const [form, setForm] = useState({ email: '', password: '' });
-  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const { error } = await supabase.auth.signInWithPassword(form);
-    if (error) setError(error.message);
-    else nav('/', { replace: true });
-  };
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) nav("/dashboard", { replace: true });
+    })();
+  }, [nav]);
+
+  async function sendMagicLink(e: React.FormEvent) {
+  e.preventDefault();
+  setErr(null);
+  setMsg(null);
+
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) return setErr("Enter your email address.");
+
+  // optional: enforce domain
+  if (!cleanEmail.endsWith("@elitelac.com")) {
+    return setErr("Only @elitelac.com emails are allowed.");
+  }
+
+  try {
+    setLoading(true);
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: cleanEmail,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        shouldCreateUser: false, // ✅ IMPORTANT: login-only (no signup)
+      },
+    });
+
+    if (error) throw error;
+
+    setMsg("Check your email for a sign-in link.");
+  } catch (e: any) {
+    // Helpful messages
+    const msg = e?.message || "Failed to send sign-in link.";
+
+    // if user is not in auth.users, you’ll typically see signup-related errors
+    if (msg.toLowerCase().includes("signup") || msg.toLowerCase().includes("signups")) {
+      setErr("This email is not authorized for this dashboard.");
+    } else {
+      setErr(msg);
+    }
+  } finally {
+    setLoading(false);
+  }
+}
+
+
+  async function signInWithGoogle() {
+    setErr(null);
+    setMsg(null);
+
+    try {
+      setLoading(true);
+
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) throw error;
+    } catch (e: any) {
+      setErr(e?.message || "Google sign-in failed.");
+      setLoading(false);
+    }
+  }
 
   return (
-  <div
-    className="min-h-screen bg-cover bg-center flex items-center justify-center"
-    style={{ backgroundImage: "url('/Background.png')" }}
-  >
-    {/* translucent overlay so text pops */}
-    <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
-    
-    <form
-      onSubmit={handleSubmit}
-      className="relative z-10 w-full max-w-sm
-                 backdrop-blur-lg bg-white/25 border border-white/40
-                 rounded-xl shadow-xl px-8 py-10 space-y-6"
-    >
-      {/* logo */}
-      <img src="/logo-school.png" alt="logo" className="h-14 mx-auto" />
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
+        <div className="flex justify-center">
+          <img src="/logo-school.png" alt="School Logo" className="h-14 w-auto" />
+        </div>
 
-      <h1 className="text-2xl font-bold text-center text-white drop-shadow">
-        London Academy&nbsp;Portal
-      </h1>
+        <h1 className="mt-4 text-2xl font-bold text-gray-900 text-center">LAC Dashboard</h1>
+        <p className="mt-1 text-sm text-gray-600 text-center">Executive access</p>
 
-      {error && (
-        <p className="bg-red-500/20 text-red-800 p-2 rounded text-sm">
-          {error}
-        </p>
-      )}
+        {msg && (
+          <div className="mt-4 rounded-xl bg-green-50 p-3 text-sm text-green-800 border border-green-100">
+            {msg}
+          </div>
+        )}
 
-      <input
-        className="w-full rounded-lg bg-white/80 backdrop-blur p-3
-                   shadow-inner focus:ring-2 focus:ring-blue-500"
-        placeholder="Email"
-        type="email"
-        value={form.email}
-        onChange={e => setForm({ ...form, email: e.target.value })}
-        required
-      />
+        {err && (
+          <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-800 border border-red-100">
+            {err}
+          </div>
+        )}
 
-      <input
-        className="w-full rounded-lg bg-white/80 backdrop-blur p-3
-                   shadow-inner focus:ring-2 focus:ring-blue-500"
-        placeholder="Password"
-        type="password"
-        value={form.password}
-        onChange={e => setForm({ ...form, password: e.target.value })}
-        required
-      />
+        <button
+          type="button"
+          onClick={signInWithGoogle}
+          disabled={loading}
+          className="mt-5 w-full rounded-xl border px-4 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50 disabled:opacity-60"
+        >
+          {loading ? "Loading..." : "Continue with Google"}
+        </button>
 
-      {/* row with remember + forgot */}
-      <div className="flex items-center justify-between text-sm text-white/80">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" className="accent-blue-600" />
-          Remember me
-        </label>
-        <a href="#" className="hover:underline">
-          Forgot password?
-        </a>
+        <div className="my-5 flex items-center gap-3">
+          <div className="h-px flex-1 bg-gray-200" />
+          <span className="text-xs text-gray-500">or</span>
+          <div className="h-px flex-1 bg-gray-200" />
+        </div>
+
+        <form onSubmit={sendMagicLink} className="space-y-3">
+          <label className="block text-sm font-semibold text-gray-700">
+            Email
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="email@elitelac.com"
+              className="mt-1 w-full rounded-xl border px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </label>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            {loading ? "Sending..." : "Send sign-in link"}
+          </button>
+
+          <p className="text-xs text-gray-500 text-center">
+            We’ll email you a secure link. Click it to sign in.
+          </p>
+        </form>
       </div>
-
-      <button
-        className="w-full rounded-lg bg-blue-600 hover:bg-blue-700
-                   text-white font-semibold py-3 shadow
-                   disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Log In
-      </button>
-
-      {/* footnote */}
-      <p className="text-xs text-white/60 text-center mt-8">
-        © {new Date().getFullYear()} London Academy
-      </p>
-    </form>
-  </div>
-);
+    </div>
+  );
 }
