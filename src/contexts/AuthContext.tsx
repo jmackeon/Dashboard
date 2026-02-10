@@ -32,20 +32,28 @@ function normalizeRole(v: unknown): UserRole {
   return s === "ADMIN" || s === "PRESIDENT" || s === "STAFF" ? (s as UserRole) : "STAFF";
 }
 
-function toBool(v: unknown): boolean {
-  if (typeof v === "boolean") return v;
-  if (typeof v === "number") return v === 1;
-  if (typeof v === "string") {
-    const s = v.trim().toLowerCase();
-    return s === "true" || s === "t" || s === "1" || s === "yes";
+async function getRoleFromBackend(accessToken: string) {
+  const base = (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:10000";
+
+  const res = await fetch(`${base}/api/me`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`api/me failed (${res.status}): ${txt}`);
   }
-  return false;
+
+  return res.json() as Promise<{ email: string; role: string; is_active: boolean }>;
 }
 
 /**
- * Important fix:
- * - role requests can overlap (boot + refresh + auth state change)
- * - if an older request times out later, it should NOT overwrite the latest good role
+ * Role requests can overlap (boot + refresh + auth state change).
+ * If an older request finishes later, it should NOT overwrite the latest.
+ *
+ * UI glitch fix:
+ * - On refresh, Supabase may emit TOKEN_REFRESHED / INITIAL_SESSION events.
+ * - We should NOT flip roleLoading back to true if we already have a good role.
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -58,60 +66,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reqIdRef = useRef(0);
   const lastGoodRoleRef = useRef<UserRole>("STAFF");
 
-  async function resolveRole(nextSession: Session | null) {
+  function hasGoodRole(r: UserRole) {
+    return r === "ADMIN" || r === "PRESIDENT";
+  }
+
+  async function resolveRole(nextSession: Session | null, opts?: { silent?: boolean }) {
     const reqId = ++reqIdRef.current;
-    setRoleLoading(true);
+
+    // If we already had a good role, do not show the full-screen loader again.
+    const goodAlready = hasGoodRole(lastGoodRoleRef.current);
+    const blockUI = !(opts?.silent || goodAlready);
+
+    if (blockUI) setRoleLoading(true);
 
     try {
-      if (!nextSession?.user?.id) {
+      const token = nextSession?.access_token;
+
+      if (!token) {
         if (reqId !== reqIdRef.current) return;
         setRole("STAFF");
         lastGoodRoleRef.current = "STAFF";
         return;
       }
 
-      // ✅ Use a longer timeout; 7s can be too aggressive when Supabase refreshes.
-      const timeoutMs = 20000;
+      const me = await getRoleFromBackend(token);
 
-      const rpcPromise = supabase.rpc("get_my_role") as any;
-
-      const { data, error } = await Promise.race([
-        Promise.resolve(rpcPromise),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Role lookup timeout")), timeoutMs)),
-      ]) as any;
-
-      // if another newer request started, ignore this result
       if (reqId !== reqIdRef.current) return;
 
-      if (error) {
-        console.error("get_my_role failed:", error.message);
-        // don't downgrade if we already have a good role
-        setRole(lastGoodRoleRef.current);
-        return;
-      }
+      const r = normalizeRole(me?.role);
+      const active = !!me?.is_active;
 
-      // handle RPC returning array or object
-      const row = Array.isArray(data) ? data[0] : data;
-
-      const r = normalizeRole(row?.role);
-      const active = toBool(row?.is_active);
-
-      if (active && r !== "STAFF") {
+      if (active && hasGoodRole(r)) {
         setRole(r);
         lastGoodRoleRef.current = r;
-        return;
+      } else {
+        setRole("STAFF");
+        lastGoodRoleRef.current = "STAFF";
       }
-
-      // If inactive or missing role, treat as STAFF (but still protect from overwriting newer results)
-      setRole("STAFF");
-      lastGoodRoleRef.current = "STAFF";
     } catch (e: any) {
-      // if another newer request started, ignore this crash
       if (reqId !== reqIdRef.current) return;
 
       console.error("Role resolve crashed:", e?.message || e);
 
-      // ✅ key change: don't force STAFF on timeout/crash if we already had a role
+      // Keep last known good role if backend is down / temporary failure
       setRole(lastGoodRoleRef.current);
     } finally {
       if (reqId === reqIdRef.current) setRoleLoading(false);
@@ -130,7 +127,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(s);
         setLoading(false);
 
-        await resolveRole(s);
+        // Boot should be a real check (not silent)
+        await resolveRole(s, { silent: false });
       } catch (e: any) {
         if (!alive) return;
         console.error("Auth boot failed:", e?.message || e);
@@ -145,14 +143,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     boot();
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, s) => {
       if (!alive) return;
 
       const next = (s ?? null) as Session | null;
       setSession(next);
       setLoading(false);
 
-      await resolveRole(next);
+      // These events happen on refresh/recovery. Do it silently to avoid UI flicker.
+      const silent =
+        event === "TOKEN_REFRESHED" ||
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN";
+
+      await resolveRole(next, { silent });
     });
 
     return () => {

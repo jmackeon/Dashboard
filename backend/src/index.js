@@ -50,7 +50,16 @@ app.get("/api/weekly", authMiddleware, async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     const row = Array.isArray(data) ? data[0] : null;
-    if (!row) return res.status(404).json({ error: "No weekly report found" });
+    if (!row) {
+  return res.json({
+    id: null,
+    week_start: null,
+    week_end: null,
+    created_at: null,
+    snapshot: null,
+  });
+}
+
 
     res.json({
       id: row.id,
