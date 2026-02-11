@@ -14,10 +14,11 @@ export interface CategorySnapshot {
 }
 
 export interface WeeklySnapshot {
-  weekLabel: string; // e.g., "Week 03 (20–26 Jan 2026)"
-  asOfDateISO: string; // ISO date string
+  weekLabel: string; 
+  asOfDateISO: string;
   categories: CategorySnapshot[];
   alerts: string[];
+  metrics?: Record<string, number | string>;
 }
 
 const STORAGE_KEY = "lac_dashboard_weekly_snapshot_v1";
