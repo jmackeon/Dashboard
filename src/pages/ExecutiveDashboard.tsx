@@ -171,7 +171,7 @@ function MiniDonut({ percent, color }: { percent: number; color: string }) {
   );
 
   return (
-    <div className="relative h-[110px] w-[110px]">
+    <div className="relative h-[84px] w-[84px] md:h-[110px] md:w-[110px]">
       <Doughnut data={data} options={options} />
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="text-center">
@@ -630,7 +630,7 @@ export default function ExecutiveDashboard() {
             LIVE FEED PANEL (NEW)
         ====================================================== */}
         <section className="rounded-2xl border bg-white p-6">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
             <div>
               <h2 className="text-xl font-bold text-gray-900">Live Feed</h2>
               <p className="text-sm text-gray-600">Latest updates (like executive news).</p>
@@ -646,7 +646,7 @@ export default function ExecutiveDashboard() {
                 <div key={f.id} className="rounded-xl border bg-gray-50 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-gray-900">
+                      <div className="text-sm font-semibold text-gray-900 break-words">
                         {f.system_key}: {f.title}
                       </div>
                       <div className="mt-1 text-sm text-gray-700">{f.details}</div>

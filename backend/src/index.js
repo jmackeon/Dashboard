@@ -25,7 +25,6 @@ app.use(
   cors({
     origin: (origin, cb) => {
       if (!origin) return cb(null, true); // curl/postman
-      if (origin.endsWith(".vercel.app")) return cb(null, true);
       if (ALLOWED_ORIGINS.length === 0) return cb(null, true); // allow all if not set
       return ALLOWED_ORIGINS.includes(origin)
         ? cb(null, true)
@@ -34,8 +33,6 @@ app.use(
     credentials: true,
   })
 );
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
