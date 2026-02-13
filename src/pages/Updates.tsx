@@ -412,106 +412,72 @@ export default function Updates() {
     updateCat(id, { metrics });
   }
 
-  return (
-    <AppShell>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
+  // Updates.tsx (DROP-IN LAYOUT RESTRUCTURE)
+// ✅ No logic changes. Only layout + section hierarchy + “wizard” feel.
+// ✅ You can paste this JSX return block in place of your current return().
+
+return (
+  <AppShell>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Updates</h1>
+          <p className="mt-1 text-sm text-gray-600">
+            Daily inputs → Weekly rollup → Executive dashboard updates automatically.
+          </p>
+        </div>
+        {loading ? <span className="text-sm text-gray-500">Loading…</span> : null}
+      </div>
+
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+
+      {/* =========================
+          STEP 1 — DAILY INPUTS
+      ========================== */}
+      <div className="rounded-2xl border bg-white p-5">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Updates</h1>
+            <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800">
+              Step 1
+              <span className="opacity-60">—</span>
+              Daily Inputs
+            </div>
+            <h2 className="mt-2 text-lg font-semibold text-gray-900">Enter daily numbers + notes</h2>
             <p className="mt-1 text-sm text-gray-600">
-              Add daily notes + daily metrics. Then generate weekly rollups automatically.
+              This is what you’ll do most often. It powers the live feed and weekly summaries.
             </p>
           </div>
-          {loading ? <span className="text-sm text-gray-500">Loading…</span> : null}
-        </div>
 
-        {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
-
-        {/* WEEKLY CONTROL */}
-        <div className="rounded-2xl border bg-white p-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Weekly Control</h2>
-              <p className="text-sm text-gray-600">
-                Use rollup to compute percentages automatically from daily metrics.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={runWeeklyRollup}
-                disabled={rollingUp}
-                className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60"
-              >
-                {rollingUp ? "Rolling up…" : "Run Weekly Rollup"}
-              </button>
-              <button
-                onClick={saveWeeklySnapshotManual}
-                disabled={savingWeekly}
-                className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                title="Optional: save weekly snapshot manually (not recommended long-term)"
-              >
-                {savingWeekly ? "Saving…" : "Save Weekly Snapshot (Manual)"}
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <div className="md:col-span-2">
-              <label className="text-sm font-semibold text-gray-800">Week label</label>
-              <input
-                value={snapshot.weekLabel}
-                onChange={(e) => setSnapshot({ ...snapshot, weekLabel: e.target.value })}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
-                placeholder="Week (20–26 Jan 2026)"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-gray-800">Total focus</label>
-              <div className="mt-1 rounded-xl border bg-gray-50 px-3 py-2 text-sm text-gray-800">
-                {totalFocus}%
-              </div>
-              <p className="mt-1 text-xs text-gray-600">Tip: aim for ~100%</p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="text-sm font-semibold text-gray-800">Week start</label>
-              <input
-                type="date"
-                value={weekStart}
-                onChange={(e) => setWeekStart(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-gray-800">Week end</label>
-              <input
-                type="date"
-                value={weekEnd}
-                onChange={(e) => setWeekEnd(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* DAILY METRICS ENTRY (NEW) */}
-        <div className="rounded-2xl border bg-white p-4">
-          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Daily Metrics Entry</h2>
-              <p className="text-sm text-gray-600">
-                Enter numbers daily (manual / Excel / logs). Weekly rollup will compute the snapshot.
-              </p>
-            </div>
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={refreshMetrics}
               className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
             >
               Refresh Metrics
             </button>
+            <button
+              onClick={() => refreshDaily(dailyDate)}
+              className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Refresh Daily Notes
+            </button>
+          </div>
+        </div>
+
+        {/* Daily Metrics Entry */}
+        <div className="mt-5 rounded-2xl border bg-gray-50 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-gray-900">Daily Metrics Entry</h3>
+              <p className="mt-1 text-sm text-gray-600">
+                Add measurable values (Manual / Excel / Logs / API). Weekly rollup will compute the snapshot.
+              </p>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -545,10 +511,13 @@ export default function Updates() {
                     </option>
                   ))}
               </select>
+
               <div className="mt-1 text-xs text-gray-500">
                 Last updated:{" "}
                 <span className="font-semibold">
-                  {lastUpdatedMap.get(metricSystem) ? new Date(lastUpdatedMap.get(metricSystem)!).toLocaleString() : "—"}
+                  {lastUpdatedMap.get(metricSystem)
+                    ? new Date(lastUpdatedMap.get(metricSystem)!).toLocaleString()
+                    : "—"}
                 </span>
               </div>
             </div>
@@ -566,17 +535,20 @@ export default function Updates() {
                   </option>
                 ))}
               </select>
+
               <div className="mt-2 flex flex-wrap gap-2">
-                {presetKeysFor(metricSystem).slice(0, 3).map((p) => (
-                  <button
-                    key={p.key}
-                    type="button"
-                    onClick={() => applyPresetKey(metricSystem, p.key)}
-                    className="rounded-full border px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                  >
-                    {p.label}
-                  </button>
-                ))}
+                {presetKeysFor(metricSystem)
+                  .slice(0, 3)
+                  .map((p) => (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => applyPresetKey(metricSystem, p.key)}
+                      className="rounded-full border px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-white"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
               </div>
             </div>
 
@@ -588,6 +560,7 @@ export default function Updates() {
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                 placeholder="e.g. 72"
               />
+
               <div className="mt-2">
                 <label className="text-xs font-semibold text-gray-700">Source</label>
                 <select
@@ -627,13 +600,13 @@ export default function Updates() {
             </button>
           </div>
 
-          {/* Show latest metrics for selected system */}
+          {/* Latest metrics preview */}
           <div className="mt-4">
             <div className="text-sm font-semibold text-gray-800">Latest metrics for {metricSystem}</div>
             <div className="mt-2 grid gap-2 md:grid-cols-2">
               {metricsForSystem.length ? (
                 metricsForSystem.map((m) => (
-                  <div key={`${m.system_key}-${m.metric_key}`} className="rounded-xl border bg-gray-50 p-3">
+                  <div key={`${m.system_key}-${m.metric_key}`} className="rounded-xl border bg-white p-3">
                     <div className="text-xs font-semibold text-gray-600">{m.metric_key}</div>
                     <div className="mt-1 text-lg font-bold text-gray-900">{m.metric_value}</div>
                     <div className="mt-1 text-xs text-gray-500">
@@ -648,16 +621,12 @@ export default function Updates() {
           </div>
         </div>
 
-        {/* DAILY UPDATES (your existing live feed notes) */}
-        <div className="rounded-2xl border bg-white p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Daily Updates</h2>
-              <p className="mt-1 text-sm text-gray-600">
-                Add quick notes during the week (used in Live Feed + weekly alerts).
-              </p>
-            </div>
-          </div>
+        {/* Daily Updates (Notes / Feed) */}
+        <div className="mt-5 rounded-2xl border bg-gray-50 p-4">
+          <h3 className="font-semibold text-gray-900">Daily Updates (Notes)</h3>
+          <p className="mt-1 text-sm text-gray-600">
+            Quick narrative notes. These appear in the Live Feed and weekly alerts.
+          </p>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <div>
@@ -673,6 +642,7 @@ export default function Updates() {
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
               />
             </div>
+
             <div>
               <label className="text-sm font-semibold text-gray-800">System</label>
               <select
@@ -687,6 +657,7 @@ export default function Updates() {
                 ))}
               </select>
             </div>
+
             <div>
               <label className="text-sm font-semibold text-gray-800">Title</label>
               <input
@@ -717,18 +688,12 @@ export default function Updates() {
             >
               {savingDaily ? "Adding…" : "Add Daily Update"}
             </button>
-            <button
-              onClick={() => refreshDaily(dailyDate)}
-              className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              Refresh
-            </button>
           </div>
 
           <div className="mt-4 space-y-3">
             {dailyItems.length ? (
               dailyItems.map((it) => (
-                <div key={it.id} className="rounded-xl border bg-gray-50 p-3">
+                <div key={it.id} className="rounded-xl border bg-white p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold text-gray-900">
@@ -738,7 +703,7 @@ export default function Updates() {
                     </div>
                     <button
                       onClick={() => deleteDailyUpdate(it.id)}
-                      className="rounded-lg border px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-white"
+                      className="rounded-lg border px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                     >
                       Delete
                     </button>
@@ -750,24 +715,122 @@ export default function Updates() {
             )}
           </div>
         </div>
+      </div>
 
-        {/* OPTIONAL: CATEGORY EDITOR (kept, but you’ll rely less on it over time) */}
-        <div className="rounded-2xl border bg-white p-4">
+      {/* =========================
+          STEP 2 — WEEKLY ROLLUP
+      ========================== */}
+      <div className="rounded-2xl border bg-white p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800">
+              Step 2
+              <span className="opacity-60">—</span>
+              Weekly Rollup
+            </div>
+            <h2 className="mt-2 text-lg font-semibold text-gray-900">Generate weekly summary</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Run once at the end of the week. This computes the dashboard snapshot from daily metrics.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={runWeeklyRollup}
+              disabled={rollingUp}
+              className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60"
+            >
+              {rollingUp ? "Rolling up…" : "Run Weekly Rollup"}
+            </button>
+
+            <button
+              onClick={saveWeeklySnapshotManual}
+              disabled={savingWeekly}
+              className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              title="Optional: save weekly snapshot manually (only if needed)"
+            >
+              {savingWeekly ? "Saving…" : "Save Weekly Snapshot (Manual)"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="md:col-span-2">
+            <label className="text-sm font-semibold text-gray-800">Week label</label>
+            <input
+              value={snapshot.weekLabel}
+              onChange={(e) => setSnapshot({ ...snapshot, weekLabel: e.target.value })}
+              className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="Week (20–26 Jan 2026)"
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-semibold text-gray-800">Total focus</label>
+            <div className="mt-1 rounded-xl border bg-gray-50 px-3 py-2 text-sm text-gray-800">{totalFocus}%</div>
+            <p className="mt-1 text-xs text-gray-600">Tip: aim for ~100%</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="text-sm font-semibold text-gray-800">Week start</label>
+            <input
+              type="date"
+              value={weekStart}
+              onChange={(e) => setWeekStart(e.target.value)}
+              className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-gray-800">Week end</label>
+            <input
+              type="date"
+              value={weekEnd}
+              onChange={(e) => setWeekEnd(e.target.value)}
+              className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* =========================
+          STEP 3 — ADVANCED (OPTIONAL)
+      ========================== */}
+      <details className="rounded-2xl border bg-white p-5">
+        <summary className="cursor-pointer list-none">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700">
+                Step 3
+                <span className="opacity-60">—</span>
+                Advanced (Optional)
+              </div>
+              <h2 className="mt-2 text-lg font-semibold text-gray-900">Manual override tools</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Use only if you need to add new IT areas or manually adjust snapshot text.
+              </p>
+            </div>
+            <div className="text-sm font-semibold text-gray-600">Click to expand</div>
+          </div>
+        </summary>
+
+        {/* Optional: Category Editor (your existing UI) */}
+        <div className="mt-5 rounded-2xl border bg-gray-50 p-4">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Weekly Snapshot Editor (Optional)</h2>
-              <p className="text-sm text-gray-600">
+              <h3 className="font-semibold text-gray-900">Weekly Snapshot Editor (Optional)</h3>
+              <p className="mt-1 text-sm text-gray-600">
                 Keep notes/status tidy. Percentages should come from daily metrics + rollup.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={addCategory}
-                className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                Add IT Area
-              </button>
-            </div>
+
+            <button
+              onClick={addCategory}
+              className="rounded-xl border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-white"
+            >
+              Add IT Area
+            </button>
           </div>
 
           <div className="mt-3">
@@ -783,6 +846,10 @@ export default function Updates() {
           <div className="mt-4 space-y-4">
             {snapshot.categories.map((c) => (
               <div key={c.id} className="rounded-2xl border bg-white p-4">
+                {/* ⬇️ keep your existing category editor JSX exactly here */}
+                {/* (Paste your existing per-category editor block unchanged) */}
+                {/* -------------------------------------------------------- */}
+                {/* START: existing per-category editor */}
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="flex-1">
                     <div className="grid gap-3 md:grid-cols-3">
@@ -824,7 +891,6 @@ export default function Updates() {
                           value={c.headline}
                           onChange={(e) => updateCat(c.id, { headline: e.target.value })}
                           className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
-                          placeholder="Short key line (e.g., 503/523 enrolled (96%))"
                         />
                       </div>
                       <div>
@@ -833,7 +899,6 @@ export default function Updates() {
                           value={c.notes || ""}
                           onChange={(e) => updateCat(c.id, { notes: e.target.value })}
                           className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
-                          placeholder="1–2 short sentences"
                         />
                       </div>
                     </div>
@@ -886,20 +951,25 @@ export default function Updates() {
                     Remove
                   </button>
                 </div>
+                {/* END: existing per-category editor */}
+                {/* -------------------------------------------------------- */}
               </div>
             ))}
           </div>
         </div>
 
         {/* Alerts (still supported) */}
-        <div className="rounded-2xl border bg-white p-4">
+        <div className="mt-5 rounded-2xl border bg-gray-50 p-4">
           <div className="text-sm font-semibold text-gray-800">Alerts (optional)</div>
           <textarea
             value={snapshot.alerts.join("\n")}
             onChange={(e) =>
               setSnapshot({
                 ...snapshot,
-                alerts: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
+                alerts: e.target.value
+                  .split("\n")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
               })
             }
             className="mt-2 w-full rounded-xl border px-3 py-2 text-sm"
@@ -913,7 +983,8 @@ export default function Updates() {
             Save Weekly Snapshot (Manual)
           </button>
         </div>
-      </div>
-    </AppShell>
-  );
+      </details>
+    </div>
+  </AppShell>
+);
 }

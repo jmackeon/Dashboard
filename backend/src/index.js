@@ -159,11 +159,20 @@ app.post("/api/weekly", authMiddleware, requireRole(["ADMIN"]), async (req, res)
 
     const { data, error } = await supabase
       .from("weekly_reports")
-      .upsert(payload, { onConflict: "week_start,week_end" })
+      .upsert(payload, { onConflict: "week_start" })
       .select("id,week_start,week_end,created_at")
       .limit(1);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+  console.error("weekly upsert error:", error);
+  return res.status(500).json({
+    error: error.message,
+    code: error.code,
+    details: error.details,
+    hint: error.hint,
+  });
+}
+
 
     const row = Array.isArray(data) ? data[0] : null;
     res.json({ ok: true, row });
@@ -183,7 +192,16 @@ app.get("/api/history", authMiddleware, async (req, res) => {
       .order("week_start", { ascending: false })
       .limit(limit);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+  console.error("weekly upsert error:", error);
+  return res.status(500).json({
+    error: error.message,
+    code: error.code,
+    details: error.details,
+    hint: error.hint,
+  });
+}
+
 
     res.json({ items: data || [] });
   } catch (e) {
@@ -513,11 +531,11 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
     };
 
     const { data: prev, error: prevErr } = await supabase
-      .from("weekly_reports")
-      .select("snapshot_json")
-      .eq("week_start", prevRange.week_start)
-      .eq("week_end", prevRange.week_end)
-      .limit(1);
+    .from("weekly_reports")
+    .select("snapshot_json")
+    .eq("week_start", prevRange.week_start)
+    .limit(1);
+
 
     if (prevErr) return res.status(500).json({ error: prevErr.message });
 
@@ -567,7 +585,7 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
           snapshot_json,
           created_by: req.auth.userId,
         },
-        { onConflict: "week_start,week_end" }
+        { onConflict: "week_start" }
       )
       .select("id,week_start,week_end,snapshot_json,created_at")
       .limit(1);
