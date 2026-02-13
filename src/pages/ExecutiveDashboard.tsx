@@ -104,10 +104,10 @@ function statusBadge(status: CategorySnapshot["status"]) {
   return `${base} bg-red-50 text-red-800 border-red-200`;
 }
 
-function isUserAdoptionSystem(category: CategorySnapshot) {
+//function isUserAdoptionSystem(category: CategorySnapshot) {
   // For now: exclude MDM from adoption average & adoption chart
-  return category.name !== "MDM";
-}
+  //return category.name !== "MDM";
+//}
 
 function clampPercent(v: any) {
   const n = Number(v) || 0;
