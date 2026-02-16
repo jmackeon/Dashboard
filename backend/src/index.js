@@ -37,7 +37,7 @@ app.use(
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ---------------------------------------------------------------------
-   Helpers for weekly rollup
+   Helpers (week + label)
 ------------------------------------------------------------------------ */
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
@@ -84,6 +84,47 @@ function pickLatest(rows) {
   })[0];
 }
 
+/**
+ * Week label format (required): 20–26 Jan 2026
+ * - same month/year: 20–26 Jan 2026
+ * - different month/year: 29 Jan – 04 Feb 2026
+ */
+function formatExecutiveWeekLabel(week_start, week_end) {
+  const s = new Date(`${week_start}T00:00:00Z`);
+  const e = new Date(`${week_end}T00:00:00Z`);
+
+  const sameMonth = s.getUTCMonth() === e.getUTCMonth() && s.getUTCFullYear() === e.getUTCFullYear();
+
+  const fmtDay2 = new Intl.DateTimeFormat("en-GB", { day: "2-digit", timeZone: "UTC" });
+  const fmtEndFull = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+  const fmtStartFull = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+
+  if (week_start === week_end) {
+    return fmtStartFull.format(s);
+  }
+
+  if (sameMonth) {
+    const startDay = fmtDay2.format(s);
+    const endFull = fmtEndFull.format(e); // "26 Jan 2026"
+    return `${startDay}–${endFull}`;
+  }
+
+  // different months/years
+  const startFull = fmtStartFull.format(s); // "29 Jan 2026"
+  const endFull = fmtEndFull.format(e);     // "04 Feb 2026"
+  return `${startFull} – ${endFull}`;
+}
+
+function safeError(res, context, error) {
+  console.error(context, error);
+  return res.status(500).json({
+    error: error?.message || "Server error",
+    code: error?.code,
+    details: error?.details,
+    hint: error?.hint,
+  });
+}
+
 /* ---------------------------------------------------------------------
    Auth
 ------------------------------------------------------------------------ */
@@ -99,7 +140,7 @@ app.get("/api/me", authMiddleware, (req, res) => {
    Weekly reports
 ------------------------------------------------------------------------ */
 // GET /api/weekly?week_start=YYYY-MM-DD
-// If no params: returns latest.
+// If no params: returns latest by created_at
 app.get("/api/weekly", authMiddleware, async (req, res) => {
   try {
     const week_start = (req.query.week_start || "").toString().trim();
@@ -112,7 +153,7 @@ app.get("/api/weekly", authMiddleware, async (req, res) => {
     else q = q.order("created_at", { ascending: false }).limit(1);
 
     const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return safeError(res, "weekly select error:", error);
 
     const row = Array.isArray(data) ? data[0] : null;
 
@@ -126,12 +167,18 @@ app.get("/api/weekly", authMiddleware, async (req, res) => {
       });
     }
 
+    // Always guarantee the new label format
+    const snapshot = row.snapshot_json || null;
+    if (snapshot && row.week_start && row.week_end) {
+      snapshot.weekLabel = formatExecutiveWeekLabel(row.week_start, row.week_end);
+    }
+
     res.json({
       id: row.id,
       week_start: row.week_start,
       week_end: row.week_end,
       created_at: row.created_at,
-      snapshot: row.snapshot_json,
+      snapshot,
     });
   } catch (e) {
     console.error(e);
@@ -140,15 +187,16 @@ app.get("/api/weekly", authMiddleware, async (req, res) => {
 });
 
 // POST /api/weekly  (ADMIN only)
-// keep existing behaviour, but fix conflict key to (week_start,week_end)
+// IMPORTANT: onConflict must match your DB constraint (your table uses unique(week_start))
 app.post("/api/weekly", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
   try {
     const { week_start, week_end, snapshot } = req.body || {};
     if (!week_start || !week_end || !snapshot) {
-      return res
-        .status(400)
-        .json({ error: "week_start, week_end and snapshot are required" });
+      return res.status(400).json({ error: "week_start, week_end and snapshot are required" });
     }
+
+    // force label format
+    snapshot.weekLabel = formatExecutiveWeekLabel(week_start, week_end);
 
     const payload = {
       week_start,
@@ -163,16 +211,7 @@ app.post("/api/weekly", authMiddleware, requireRole(["ADMIN"]), async (req, res)
       .select("id,week_start,week_end,created_at")
       .limit(1);
 
-    if (error) {
-  console.error("weekly upsert error:", error);
-  return res.status(500).json({
-    error: error.message,
-    code: error.code,
-    details: error.details,
-    hint: error.hint,
-  });
-}
-
+    if (error) return safeError(res, "weekly upsert error:", error);
 
     const row = Array.isArray(data) ? data[0] : null;
     res.json({ ok: true, row });
@@ -192,18 +231,18 @@ app.get("/api/history", authMiddleware, async (req, res) => {
       .order("week_start", { ascending: false })
       .limit(limit);
 
-    if (error) {
-  console.error("weekly upsert error:", error);
-  return res.status(500).json({
-    error: error.message,
-    code: error.code,
-    details: error.details,
-    hint: error.hint,
-  });
-}
+    if (error) return safeError(res, "history select error:", error);
 
+    // enforce label format for every item
+    const items = (data || []).map((r) => {
+      const snap = r.snapshot_json || null;
+      if (snap && r.week_start && r.week_end) {
+        snap.weekLabel = formatExecutiveWeekLabel(r.week_start, r.week_end);
+      }
+      return { ...r, snapshot_json: snap };
+    });
 
-    res.json({ items: data || [] });
+    res.json({ items });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to load history" });
@@ -211,22 +250,33 @@ app.get("/api/history", authMiddleware, async (req, res) => {
 });
 
 /* ---------------------------------------------------------------------
-   Daily updates
+   Daily updates (UPDATE + FOCUS)
 ------------------------------------------------------------------------ */
-// GET /api/daily?date=YYYY-MM-DD (default today)
+function normalizeKind(v) {
+  const s = (v || "").toString().trim().toUpperCase();
+  return s === "FOCUS" ? "FOCUS" : "UPDATE";
+}
+
+// GET /api/daily?date=YYYY-MM-DD (default today)  (returns both kinds)
 app.get("/api/daily", authMiddleware, async (req, res) => {
   try {
     const date =
       (req.query.date || "").toString().trim() ||
       new Date().toISOString().slice(0, 10);
 
-    const { data, error } = await supabase
+    const kind = (req.query.kind || "").toString().trim().toUpperCase(); // optional
+
+    let q = supabase
       .from("daily_updates")
-      .select("id,date,system_key,title,details,created_at")
+      .select("id,date,system_key,title,details,kind,created_at")
       .eq("date", date)
       .order("created_at", { ascending: false });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (kind === "UPDATE" || kind === "FOCUS") q = q.eq("kind", kind);
+
+    const { data, error } = await q;
+    if (error) return safeError(res, "daily select error:", error);
+
     res.json({ date, items: data || [] });
   } catch (e) {
     console.error(e);
@@ -234,22 +284,28 @@ app.get("/api/daily", authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/daily-range?from=YYYY-MM-DD&to=YYYY-MM-DD
+// GET /api/daily-range?from=YYYY-MM-DD&to=YYYY-MM-DD&kind=UPDATE|FOCUS (optional)
 app.get("/api/daily-range", authMiddleware, async (req, res) => {
   try {
     const from = (req.query.from || "").toString().trim();
     const to = (req.query.to || "").toString().trim();
     if (!from || !to) return res.status(400).json({ error: "from and to are required" });
 
-    const { data, error } = await supabase
+    const kind = (req.query.kind || "").toString().trim().toUpperCase();
+
+    let q = supabase
       .from("daily_updates")
-      .select("id,date,system_key,title,details,created_at")
+      .select("id,date,system_key,title,details,kind,created_at")
       .gte("date", from)
       .lte("date", to)
       .order("date", { ascending: true })
       .order("created_at", { ascending: true });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (kind === "UPDATE" || kind === "FOCUS") q = q.eq("kind", kind);
+
+    const { data, error } = await q;
+    if (error) return safeError(res, "daily-range select error:", error);
+
     res.json({ from, to, items: data || [] });
   } catch (e) {
     console.error(e);
@@ -257,8 +313,110 @@ app.get("/api/daily-range", authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/daily (ADMIN only)
+// POST /api/daily (ADMIN only)  (supports kind)
 app.post("/api/daily", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
+  try {
+    const { date, system_key, title, details, kind } = req.body || {};
+    const d =
+      (date || "").toString().trim() || new Date().toISOString().slice(0, 10);
+
+    if (!title || !details)
+      return res.status(400).json({ error: "title and details are required" });
+
+    const payload = {
+      date: d,
+      system_key: (system_key || "General").toString().trim(),
+      title: title.toString().trim(),
+      details: details.toString().trim(),
+      kind: normalizeKind(kind),
+      created_by: req.auth.userId,
+    };
+
+    const { data, error } = await supabase
+      .from("daily_updates")
+      .insert(payload)
+      .select("id,date,system_key,title,details,kind,created_at")
+      .limit(1);
+
+    if (error) return safeError(res, "daily insert error:", error);
+
+    res.json({ ok: true, item: Array.isArray(data) ? data[0] : null });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to create daily update" });
+  }
+});
+
+// DELETE /api/daily/:id (ADMIN only)
+app.delete("/api/daily/:id", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { error } = await supabase.from("daily_updates").delete().eq("id", id);
+    if (error) return safeError(res, "daily delete error:", error);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to delete daily update" });
+  }
+});
+
+/* ---------------------------------------------------------------------
+   Live Feed (UPDATE only — keep “Strategic Focus” separate)
+------------------------------------------------------------------------ */
+// GET /api/feed?limit=10
+app.get("/api/feed", authMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
+
+    const { data, error } = await supabase
+      .from("daily_updates")
+      .select("id,date,system_key,title,details,kind,created_at")
+      .eq("kind", "UPDATE")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) return safeError(res, "feed select error:", error);
+    res.json({ items: data || [] });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load live feed" });
+  }
+});
+
+/* ---------------------------------------------------------------------
+   Strategic Focus (FOCUS) — backend-driven
+------------------------------------------------------------------------ */
+// GET /api/focus?week_start=YYYY-MM-DD  (defaults to current week)
+app.get("/api/focus", authMiddleware, async (req, res) => {
+  try {
+    const qs = (req.query.week_start || "").toString().trim();
+    const { week_start, week_end } = getWeekRange(qs || null);
+
+    const { data, error } = await supabase
+      .from("daily_updates")
+      .select("id,date,system_key,title,details,kind,created_at")
+      .eq("kind", "FOCUS")
+      .gte("date", week_start)
+      .lte("date", week_end)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) return safeError(res, "focus select error:", error);
+
+    res.json({
+      week_start,
+      week_end,
+      weekLabel: formatExecutiveWeekLabel(week_start, week_end),
+      items: data || [],
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load focus items" });
+  }
+});
+
+// POST /api/focus (ADMIN) — creates a daily_updates row with kind=FOCUS
+app.post("/api/focus", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
   try {
     const { date, system_key, title, details } = req.body || {};
     const d =
@@ -272,60 +430,27 @@ app.post("/api/daily", authMiddleware, requireRole(["ADMIN"]), async (req, res) 
       system_key: (system_key || "General").toString().trim(),
       title: title.toString().trim(),
       details: details.toString().trim(),
+      kind: "FOCUS",
       created_by: req.auth.userId,
     };
 
     const { data, error } = await supabase
       .from("daily_updates")
       .insert(payload)
-      .select("id,date,system_key,title,details,created_at")
+      .select("id,date,system_key,title,details,kind,created_at")
       .limit(1);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return safeError(res, "focus insert error:", error);
+
     res.json({ ok: true, item: Array.isArray(data) ? data[0] : null });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "Failed to create daily update" });
-  }
-});
-
-// DELETE /api/daily/:id (ADMIN only)
-app.delete("/api/daily/:id", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { error } = await supabase.from("daily_updates").delete().eq("id", id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Failed to delete daily update" });
+    res.status(500).json({ error: "Failed to create focus item" });
   }
 });
 
 /* ---------------------------------------------------------------------
-   NEW: Live Feed (latest daily_updates)
------------------------------------------------------------------------- */
-// GET /api/feed?limit=10
-app.get("/api/feed", authMiddleware, async (req, res) => {
-  try {
-    const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
-
-    const { data, error } = await supabase
-      .from("daily_updates")
-      .select("id,date,system_key,title,details,created_at")
-      .order("created_at", { ascending: false })
-      .limit(limit);
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ items: data || [] });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Failed to load live feed" });
-  }
-});
-
-/* ---------------------------------------------------------------------
-   NEW: Metrics (Daily Metrics + Latest + Last Updated)
+   Metrics (Daily Metrics + Latest + Last Updated)
 ------------------------------------------------------------------------ */
 // GET /api/metrics/latest
 app.get("/api/metrics/latest", authMiddleware, async (_req, res) => {
@@ -336,7 +461,7 @@ app.get("/api/metrics/latest", authMiddleware, async (_req, res) => {
       .order("system_key", { ascending: true })
       .order("metric_key", { ascending: true });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return safeError(res, "metrics/latest error:", error);
     res.json({ items: data || [] });
   } catch (e) {
     console.error(e);
@@ -352,7 +477,7 @@ app.get("/api/systems/last-updated", authMiddleware, async (_req, res) => {
       .select("system_key,last_updated")
       .order("system_key", { ascending: true });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return safeError(res, "systems/last-updated error:", error);
     res.json({ items: data || [] });
   } catch (e) {
     console.error(e);
@@ -391,7 +516,7 @@ app.post("/api/metrics", authMiddleware, requireRole(["ADMIN"]), async (req, res
       .select("id,date,system_key,metric_key,metric_value,source,meta,updated_at")
       .limit(1);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return safeError(res, "metrics upsert error:", error);
     res.json({ ok: true, item: Array.isArray(data) ? data[0] : null });
   } catch (e) {
     console.error(e);
@@ -400,7 +525,7 @@ app.post("/api/metrics", authMiddleware, requireRole(["ADMIN"]), async (req, res
 });
 
 /* ---------------------------------------------------------------------
-   NEW: Weekly Rollup (ADMIN) - computes snapshot_json from daily metrics
+   Weekly Rollup (ADMIN) - computes snapshot_json from daily metrics
 ------------------------------------------------------------------------ */
 // POST /api/weekly/rollup
 // body optional: { date: "YYYY-MM-DD" }
@@ -416,7 +541,7 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
       .gte("date", week_start)
       .lte("date", week_end);
 
-    if (rowsErr) return res.status(500).json({ error: rowsErr.message });
+    if (rowsErr) return safeError(res, "weekly rollup metrics select error:", rowsErr);
 
     const metrics = rows || [];
 
@@ -437,7 +562,7 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
       return pickLatest(list);
     }
 
-    // Simple status rules:
+    // status rules:
     // - health_code=3 => CRITICAL
     // - health_code=2 => ATTENTION
     // - MDM dex_attempts>0 => ATTENTION
@@ -460,7 +585,7 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
     function buildCategory(systemKey) {
       const isMDM = systemKey === "MDM";
 
-      // Which metric drives the donut %
+      // Which metric drives the % tile
       let mainKey = "adoption_percent";
       if (isMDM) mainKey = "coverage_percent";
       if (systemKey === "Staff Attendance") mainKey = "usage_percent";
@@ -486,13 +611,6 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
         if (m) metricsBlock[k] = m.metric_value;
       }
 
-      let notes = "";
-      if (systemKey === "MDM") notes = "DeX attempts monitored. Controls + discipline reporting active.";
-      if (systemKey === "LACdrop") notes = "Daily usage tracked. Parent adoption is monitored.";
-      if (systemKey === "Toddle Parent") notes = "Weekly adoption derived from activity logs.";
-      if (systemKey === "Staff Attendance") notes = "Daily attendance usage tracked.";
-      if (systemKey === "Online Test") notes = "Progress tracked in system overview.";
-
       const headline = isMDM ? "Coverage / Compliance" : "Adoption / Usage";
 
       return {
@@ -501,7 +619,6 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
         status: resolveStatus(systemKey),
         headline,
         focusPercent,
-        notes,
         metrics: metricsBlock,
       };
     }
@@ -520,24 +637,17 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
     const overallPercent = pct(stabilityPct * 0.6 + avgUserAdoption * 0.4);
 
     // prev week overallPercent (if exists)
-    const lastWeekStart = new Date(week_start);
+    const lastWeekStart = new Date(`${week_start}T00:00:00Z`);
     lastWeekStart.setUTCDate(lastWeekStart.getUTCDate() - 7);
-    const lastWeekEnd = new Date(week_end);
-    lastWeekEnd.setUTCDate(lastWeekEnd.getUTCDate() - 7);
-
-    const prevRange = {
-      week_start: isoDate(lastWeekStart),
-      week_end: isoDate(lastWeekEnd),
-    };
+    const prevWeekStart = isoDate(lastWeekStart);
 
     const { data: prev, error: prevErr } = await supabase
-    .from("weekly_reports")
-    .select("snapshot_json")
-    .eq("week_start", prevRange.week_start)
-    .limit(1);
+      .from("weekly_reports")
+      .select("snapshot_json")
+      .eq("week_start", prevWeekStart)
+      .limit(1);
 
-
-    if (prevErr) return res.status(500).json({ error: prevErr.message });
+    if (prevErr) return safeError(res, "weekly rollup prev snapshot error:", prevErr);
 
     const prevSnap = Array.isArray(prev) && prev[0]?.snapshot_json ? prev[0].snapshot_json : null;
     const lastWeekOverallPercent =
@@ -545,23 +655,28 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
         ? pct(prevSnap.metrics.overallPercent)
         : null;
 
-    // Alerts: latest 10 daily updates in the week
-    const { data: alertsRows } = await supabase
+    // Alerts: latest UPDATE items in the week (not focus)
+    const { data: alertsRows, error: alertsErr } = await supabase
       .from("daily_updates")
       .select("title,system_key,created_at")
+      .eq("kind", "UPDATE")
       .gte("date", week_start)
       .lte("date", week_end)
       .order("created_at", { ascending: false })
       .limit(10);
 
+    if (alertsErr) return safeError(res, "weekly rollup alerts error:", alertsErr);
+
     const alerts = (alertsRows || []).map((u) =>
       u.system_key ? `${u.system_key}: ${u.title}` : u.title
     );
 
-    const weekLabel = `Week (${week_start} to ${week_end})`;
+    const weekLabel = formatExecutiveWeekLabel(week_start, week_end);
 
     const snapshot_json = {
       weekLabel,
+      week_start,
+      week_end,
       asOfDateISO: week_end,
       alerts,
       categories,
@@ -590,7 +705,7 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
       .select("id,week_start,week_end,snapshot_json,created_at")
       .limit(1);
 
-    if (upErr) return res.status(500).json({ error: upErr.message });
+    if (upErr) return safeError(res, "weekly rollup upsert error:", upErr);
 
     const row = Array.isArray(up) ? up[0] : null;
 
