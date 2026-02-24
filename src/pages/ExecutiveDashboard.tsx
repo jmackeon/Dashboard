@@ -119,26 +119,91 @@ function rawPair(
   return { a: null, b: null, rowLabel: "Usage" };
 }
 
+// ─── Mobile Progress Bar (replaces donut on mobile) ───────────────────────────
+
+function MobileProgressBar({
+  title,
+  value,
+  colorClass,
+}: {
+  title: string;
+  value: number;
+  colorClass: string; // e.g. "text-amber-500"
+}) {
+  return (
+    <div className="mt-4 sm:hidden">
+      {/* Centered Percentage + Label */}
+      <div className="flex flex-col items-center text-center">
+        <p className="text-2xl font-extrabold leading-none text-gray-900">
+          {value}%
+        </p>
+
+        <p className="mt-1 text-xs font-medium text-gray-500">
+          {title}
+        </p>
+
+      
+      </div>
+
+      {/* Progress Bar */}
+      <div className="mt-3 h-2 w-full rounded-full bg-gray-100">
+        <div
+          className={`h-2 rounded-full bg-current ${colorClass} transition-[width] duration-700 ease-out`}
+          style={{ width: `${value}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── SVG Percent Ring ─────────────────────────────────────────────────────────
 
-function PercentRing({ value, colorClass, label }: { value: number; colorClass: string; label: string }) {
-  const r = 30;
+function PercentRing({
+  value,
+  colorClass,
+  label,
+}: {
+  value: number;
+  colorClass: string;
+  label: string;
+}) {
+  const r = 32;
   const circ = 2 * Math.PI * r;
-  const dash = (value / 100) * circ;
+
+  // Animate on mount: start empty, then fill to value
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const dashOffset = mounted ? circ - (value / 100) * circ : circ;
+
   return (
-    <div className="relative h-20 w-20 flex-shrink-0 sm:h-24 sm:w-24">
+    // Desktop/tablet only (hidden on mobile)
+    <div className="relative hidden flex-shrink-0 sm:flex sm:h-28 sm:w-28">
       <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90">
-        <circle cx="40" cy="40" r={r} stroke="#E5E7EB" strokeWidth="8" fill="none" />
+        <circle cx="40" cy="40" r={r} stroke="#E5E7EB" strokeWidth="7" fill="none" />
         <circle
-          cx="40" cy="40" r={r}
-          stroke="currentColor" className={colorClass}
-          strokeWidth="8" fill="none" strokeLinecap="round"
-          strokeDasharray={`${dash} ${circ - dash}`}
+          cx="40"
+          cy="40"
+          r={r}
+          stroke="currentColor"
+          className={colorClass}
+          strokeWidth="7"
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={dashOffset}
+          style={{ transition: "stroke-dashoffset 800ms ease-out" }}
         />
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-lg font-bold leading-none text-gray-900 sm:text-xl">{value}%</span>
-        <span className="mt-0.5 text-[10px] font-semibold text-gray-400 sm:text-[11px]">{label}</span>
+
+      {/* More breathing room */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
+        <span className="text-xl font-black leading-tight text-gray-900">
+          {value}%
+        </span>
+        <span className="mt-1 text-[11px] font-semibold tracking-wide text-gray-400">
+          {label}
+        </span>
       </div>
     </div>
   );
@@ -176,15 +241,15 @@ function SystemCard({
   const note = sys[mainKey(sysKey)]?.meta?.note || snapCat?.notes || null;
 
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
+    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-6">
       {/* Top row: name + badge on left, ring on right */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-4 sm:gap-6">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-bold text-gray-900 sm:text-base">{label}</h3>
             <StatusBadge status={snapCat?.status} />
           </div>
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="mt-1 text-xs text-gray-300 sm:text-gray-400">
             Updated: <span className="font-medium text-gray-500">{niceTimeAgo(lastUpdatedMap.get(sysKey))}</span>
           </p>
 
@@ -200,12 +265,19 @@ function SystemCard({
 
           {/* Note — only rendered when content exists */}
           {note && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-gray-500 sm:text-sm">
+            <p className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-gray-400 sm:text-sm sm:text-gray-500">
               <span className="mt-px flex-shrink-0">📌</span>
               <span>{note}</span>
             </p>
           )}
         </div>
+
+                {/* Mobile-only: replace donut with progress bar */}
+                <MobileProgressBar
+                  title={`${label} ${pair.rowLabel || "Usage"}`}
+                  value={pct}
+                  colorClass={ringClass}
+                />
 
         <PercentRing value={pct} colorClass={ringClass} label={ringLabel} />
       </div>
