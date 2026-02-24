@@ -48,8 +48,10 @@ export default function Login() {
     setErr(null); setMsg(null);
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) return setErr("Enter your email address.");
-    if (!cleanEmail.endsWith("@elitelac.com"))
-      return setErr("Only @elitelac.com emails are allowed.");
+    const ALLOWED_DOMAINS = ["@elitelac.com", "@londonacademy.ma"];
+    if (!ALLOWED_DOMAINS.some(d => cleanEmail.endsWith(d))) {
+      return setErr("Only @elitelac.com or @gmail.com emails are allowed.");
+    }
     try {
       setLoading(true);
       const { error } = await supabase.auth.signInWithOtp({
