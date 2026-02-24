@@ -20,7 +20,7 @@ type SystemLastUpdated = {
   last_updated: string;
 };
 
-// ─── System accent colours (text only — no rings, no bars) ────────────────────
+// ─── System accent colours ────────────────────────────────────────────────────
 
 const SYSTEM_COLOUR: Record<string, string> = {
   "MDM":                        "#F59E0B",
@@ -59,14 +59,20 @@ function niceTimeAgo(iso?: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+// CHANGE 1: Fixed date format — "Week of 02–08 Mar 2026"
 function fmtWeekLabel(ws?: string | null, we?: string | null): string {
   if (!ws || !we) return "";
-  const s = new Date(ws), e = new Date(we);
-  const same = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
-  const day  = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit" });
-  const full = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
-  const sm   = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
-  return same ? `${day(s)}–${full(e)}` : `${sm(s)}–${full(e)}`;
+  const s = new Date(ws);
+  const e = new Date(we);
+  const startDay   = s.toLocaleDateString("en-GB", { day: "2-digit" });
+  const endDay     = e.toLocaleDateString("en-GB", { day: "2-digit" });
+  const endMonth   = e.toLocaleDateString("en-GB", { month: "short" });
+  const year       = e.getFullYear();
+  if (s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()) {
+    return `Week of ${startDay}–${endDay} ${endMonth} ${year}`;
+  }
+  const startMonth = s.toLocaleDateString("en-GB", { month: "short" });
+  return `Week of ${startDay} ${startMonth}–${endDay} ${endMonth} ${year}`;
 }
 
 function buildLiveMap(rows: MetricRow[]) {
@@ -127,7 +133,7 @@ function StatusBadge({ status }: { status?: string }) {
   return <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">STABLE</span>;
 }
 
-// ─── System Card — percentage as bold number, no ring, no bar ─────────────────
+// ─── System Card ──────────────────────────────────────────────────────────────
 
 function SystemCard({
   sysKey, liveMap, lastUpdatedMap, snapshot,
@@ -137,46 +143,34 @@ function SystemCard({
   lastUpdatedMap: Map<string, string>;
   snapshot: WeeklySnapshot;
 }) {
-  const snapCat  = snapshot.categories.find(c => c.name === sysKey);
-  const sys      = liveMap.get(sysKey) || {};
-  const pct      = resolvePct(sysKey, liveMap, snapCat?.focusPercent);
+  const snapCat        = snapshot.categories.find(c => c.name === sysKey);
+  const sys            = liveMap.get(sysKey) || {};
+  const pct            = resolvePct(sysKey, liveMap, snapCat?.focusPercent);
   const { a, b, lbl } = rawPair(sysKey, sys);
-  const colour   = systemColour(sysKey);
-  const logo     = SYSTEM_LOGO[sysKey] ?? null;
-  const note     = sys[mainKey(sysKey)]?.meta?.note || snapCat?.notes || null;
-  const lastUp   = lastUpdatedMap.get(sysKey);
+  const colour         = systemColour(sysKey);
+  const logo           = SYSTEM_LOGO[sysKey] ?? null;
+  const note           = sys[mainKey(sysKey)]?.meta?.note || snapCat?.notes || null;
+  const lastUp         = lastUpdatedMap.get(sysKey);
 
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-4 sm:p-5">
       <div className="flex items-start justify-between gap-4">
-
-        {/* Left: system info */}
         <div className="min-w-0 flex-1">
-          {/* Logo + name + badge */}
           <div className="flex flex-wrap items-center gap-2">
-            {logo && (
-              <img
-                src={logo}
-                alt={sysKey}
-                className="h-6 w-6 rounded object-contain"
-              />
-            )}
+            {logo && <img src={logo} alt={sysKey} className="h-6 w-6 rounded object-contain" />}
             <h3 className="text-sm font-bold text-gray-900">{sysKey}</h3>
             <StatusBadge status={snapCat?.status} />
           </div>
           <p className="mt-1 text-xs text-gray-400">
             Updated: <span className="font-medium text-gray-500">{niceTimeAgo(lastUp)}</span>
           </p>
-
           {a !== null && b !== null ? (
             <p className="mt-3 text-sm text-gray-500">
-              {lbl}:{" "}
-              <span className="font-bold text-gray-900">{a}/{b}</span>
+              {lbl}: <span className="font-bold text-gray-900">{a}/{b}</span>
             </p>
           ) : (
             <p className="mt-3 text-sm italic text-gray-300">No figures yet</p>
           )}
-
           {note && (
             <p className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-gray-400">
               <span className="mt-px flex-shrink-0">📌</span>
@@ -185,16 +179,15 @@ function SystemCard({
           )}
         </div>
 
-        {/* Right: percentage — bold number in accent colour */}
+        {/* CHANGE 2: Reduced size/boldness — keeps colour, steps down visually */}
         <div className="flex-shrink-0 text-right">
-          <p className="text-3xl font-black leading-none sm:text-4xl" style={{ color: colour }}>
+          <p className="text-xl font-semibold leading-none sm:text-2xl" style={{ color: colour }}>
             {pct}%
           </p>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+          <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-gray-400">
             {sysKey === "MDM" ? "Enrolled" : "Adoption"}
           </p>
         </div>
-
       </div>
     </div>
   );
@@ -246,8 +239,6 @@ export default function ExecutiveDashboard() {
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  // ─── Derived ────────────────────────────────────────────────────────────────
-
   const stableCount    = snapshot.categories.filter(c => c.status === "STABLE").length;
   const attentionCount = snapshot.categories.filter(c => c.status === "ATTENTION").length;
   const criticalCount  = snapshot.categories.filter(c => c.status === "CRITICAL").length;
@@ -268,17 +259,15 @@ export default function ExecutiveDashboard() {
     return typeof v === "number" ? clamp(v) : Math.max(0, thisWeekOverall - 3);
   }, [snapshot, thisWeekOverall]);
 
-  const delta     = thisWeekOverall - lastWeekOverall;
-  const wkLabel   = fmtWeekLabel(weekStart, weekEnd) || snapshot.weekLabel;
+  const delta   = thisWeekOverall - lastWeekOverall;
+  // CHANGE 1 + 7: week label shown under the title as plain text, not a badge
+  const wkLabel = fmtWeekLabel(weekStart, weekEnd) || snapshot.weekLabel;
 
-  // All system keys: snapshot categories first (preserves order), then any live-only ones
   const allSystemKeys = useMemo(() => {
     const fromSnap    = snapshot.categories.map(c => c.name);
     const fromMetrics = Array.from(liveMap.keys()).filter(k => !fromSnap.includes(k));
     return [...fromSnap, ...fromMetrics];
   }, [snapshot.categories, liveMap]);
-
-  // ─── Loading ────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -291,68 +280,70 @@ export default function ExecutiveDashboard() {
     );
   }
 
-  // ─── Blocks ─────────────────────────────────────────────────────────────────
-
   const errorBanner = loadError && (
     <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
       ⚠ Using cached data — {loadError}
     </div>
   );
 
-  const weekBadge = wkLabel && wkLabel !== "Loading…" && (
-    <span className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-500">
-      {wkLabel}
-    </span>
-  );
-
-  // KPI strip — 2-col mobile, 3-col sm+
+  // CHANGE 4: Digital Health — delta pushed to far right, "vs last week" stacked under it
+  // CHANGE 5: Systems Stable — "All clear"/counts pushed to far right
+  // CHANGE 6: Follow-up Items — "items needing review" pushed to far right
   const kpiStrip = (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
 
       <div className="rounded-2xl border border-gray-100 bg-white p-4">
         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Digital Health</p>
-        <div className="mt-2 flex items-end gap-2 leading-none">
+        <div className="mt-2 flex items-end justify-between leading-none">
           <p className="text-3xl font-black text-gray-900">{thisWeekOverall}%</p>
-          <span className={`mb-0.5 text-xs font-bold ${delta >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-            {delta >= 0 ? "▲" : "▼"}{Math.abs(delta)}%
-          </span>
+          <div className="flex flex-col items-end gap-0.5">
+            <span className={`text-xs font-bold ${delta >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+              {delta >= 0 ? "▲" : "▼"}{Math.abs(delta)}%
+            </span>
+            <span className="text-[10px] text-gray-400">vs last week</span>
+          </div>
         </div>
-        <p className="mt-1.5 text-[10px] text-gray-400">vs last week</p>
       </div>
 
       <div className="rounded-2xl border border-gray-100 bg-white p-4">
         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Systems Stable</p>
-        <div className="mt-2 flex items-end gap-1 leading-none">
-          <p className="text-3xl font-black text-gray-900">{stableCount}</p>
-          <span className="mb-0.5 text-lg font-light text-gray-300">/ {totalSystems}</span>
+        <div className="mt-2 flex items-end justify-between leading-none">
+          <div className="flex items-end gap-1">
+            <p className="text-3xl font-black text-gray-900">{stableCount}</p>
+            <span className="mb-0.5 text-lg font-light text-gray-300">/ {totalSystems}</span>
+          </div>
+          <div className="flex flex-col items-end text-[10px]">
+            {attentionCount === 0 && criticalCount === 0
+              ? <span className="font-semibold text-emerald-500">All clear</span>
+              : <>
+                  {attentionCount > 0 && <span className="font-semibold text-amber-500">{attentionCount} attention</span>}
+                  {criticalCount  > 0 && <span className="font-semibold text-red-500">{criticalCount} critical</span>}
+                </>
+            }
+          </div>
         </div>
-        <p className="mt-1.5 text-[10px] text-gray-400">
-          {attentionCount === 0 && criticalCount === 0
-            ? <span className="font-semibold text-emerald-500">All clear</span>
-            : <>
-                {attentionCount > 0 && <span className="font-semibold text-amber-500">{attentionCount} attention </span>}
-                {criticalCount  > 0 && <span className="font-semibold text-red-500">{criticalCount} critical</span>}
-              </>
-          }
-        </p>
       </div>
 
       <div className="col-span-2 rounded-2xl border border-gray-100 bg-white p-4 sm:col-span-1">
         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Follow-up Items</p>
-        <p className={`mt-2 text-3xl font-black leading-none ${attentionCount + criticalCount > 0 ? "text-amber-500" : "text-emerald-500"}`}>
-          {attentionCount + criticalCount}
-        </p>
-        <p className="mt-1.5 text-[10px] text-gray-400">items needing review</p>
+        <div className="mt-2 flex items-end justify-between leading-none">
+          <p className={`text-3xl font-black ${attentionCount + criticalCount > 0 ? "text-amber-500" : "text-emerald-500"}`}>
+            {attentionCount + criticalCount}
+          </p>
+          <p className="text-right text-[10px] leading-snug text-gray-400">
+            items needing<br />review
+          </p>
+        </div>
       </div>
 
     </div>
   );
 
+  // CHANGE 3: "Auto-refreshes every 30s" removed
   const liveMetrics = (
     <div>
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3">
         <h2 className="text-base font-bold text-gray-900">Live App Metrics</h2>
-        <span className="text-[10px] text-gray-300">Auto-refreshes every 30s</span>
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {allSystemKeys.map(key => (
@@ -392,9 +383,12 @@ export default function ExecutiveDashboard() {
 
   const body = (
     <div className="space-y-4 sm:space-y-5">
-      <div className="flex items-center justify-between gap-3">
+      {/* CHANGE 7: date as subtitle under the title — no floating badge */}
+      <div>
         <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Executive Dashboard</h1>
-        {weekBadge}
+        {wkLabel && wkLabel !== "Loading…" && (
+          <p className="mt-0.5 text-xs text-gray-400">{wkLabel}</p>
+        )}
       </div>
       {errorBanner}
       {kpiStrip}

@@ -48,9 +48,9 @@ export default function Login() {
     setErr(null); setMsg(null);
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) return setErr("Enter your email address.");
-    const ALLOWED_DOMAINS = ["@elitelac.com", "@londonacademy.ma"];
+    const ALLOWED_DOMAINS = ["@elitelac.com", "londonacademy.ma"];
     if (!ALLOWED_DOMAINS.some(d => cleanEmail.endsWith(d))) {
-      return setErr("Only @elitelac.com or @gmail.com emails are allowed.");
+      return setErr("Only @elitelac.com or @londonacademy.ma emails are allowed.");
     }
     try {
       setLoading(true);
@@ -240,7 +240,7 @@ export default function Login() {
                         type="email"
                         value={email}
                         onChange={e => setEmail(e.target.value)}
-                        placeholder="you@elitelac.com"
+                        placeholder="you@elitelac.com or londonacademy.ma"
                         className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-4 text-sm text-gray-800 outline-none transition placeholder:text-gray-300 focus:border-transparent focus:ring-2"
                         style={{ "--tw-ring-color": BRAND } as any}
                         autoComplete="email"
