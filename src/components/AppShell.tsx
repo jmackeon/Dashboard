@@ -24,7 +24,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       : "px-3 py-2 text-sm font-medium text-gray-500 transition hover:text-gray-800";
 
   return (
-    <div className="min-h-screen bg-[#F7F8FA]">
+    <>
+      <style>{`
+        @keyframes bgShift {
+          0%   { background-position: 0% 50%; }
+          50%  { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .lac-bg {
+          background: linear-gradient(135deg, #f0f7f4, #eaf4fb, #f4f9f0, #ecf4f9);
+          background-size: 300% 300%;
+          animation: bgShift 20s ease infinite;
+        }
+      `}</style>
+      <div className="lac-bg min-h-screen">
 
       {/* ── Top bar ─────────────────────────────────────────────────── */}
       <div className="sticky top-0 z-20 border-b border-gray-100 bg-white/90 backdrop-blur-sm">
@@ -125,6 +138,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </div>
     </div>
+    </>
   );
 }
 

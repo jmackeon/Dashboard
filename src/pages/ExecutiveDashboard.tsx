@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import { apiFetch } from "../lib/api";
-import { useAuth } from "../contexts/AuthContext";
 import { getDefaultSnapshot, type WeeklySnapshot } from "../lib/reportStore";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -21,14 +20,25 @@ type SystemLastUpdated = {
   last_updated: string;
 };
 
-// ─── Core systems ─────────────────────────────────────────────────────────────
+// ─── System accent colours (text only — no rings, no bars) ────────────────────
 
-const SYSTEMS = [
-  { key: "MDM",                        label: "MDM",                        ring: "text-amber-500"  },
-  { key: "LACdrop",                    label: "LACdrop",                    ring: "text-blue-600"   },
-  { key: "Staff Biometric Attendance", label: "Staff Biometric Attendance", ring: "text-teal-500"   },
-  { key: "Toddle Parent",              label: "Toddle Parent",              ring: "text-cyan-500"   },
-] as const;
+const SYSTEM_COLOUR: Record<string, string> = {
+  "MDM":                        "#F59E0B",
+  "LACdrop":                    "#2563EB",
+  "Staff Biometric Attendance": "#0D9488",
+  "Toddle Parent":              "#7C3AED",
+};
+
+function systemColour(key: string): string {
+  return SYSTEM_COLOUR[key] ?? "#6B7280";
+}
+
+const SYSTEM_LOGO: Record<string, string> = {
+  "MDM":                        "/MDM logo.png",
+  "LACdrop":                    "/LacDrop.png",
+  "Staff Biometric Attendance": "/Attendance.png",
+  "Toddle Parent":              "/toddle.png",
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,19 +56,17 @@ function niceTimeAgo(iso?: string | null): string {
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 function fmtWeekLabel(ws?: string | null, we?: string | null): string {
   if (!ws || !we) return "";
-  const s = new Date(ws);
-  const e = new Date(we);
-  const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
-  const day = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit" });
+  const s = new Date(ws), e = new Date(we);
+  const same = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
+  const day  = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit" });
   const full = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
-  const shortMonth = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
-  return sameMonth ? `${day(s)}–${full(e)}` : `${shortMonth(s)}–${full(e)}`;
+  const sm   = (d: Date) => d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  return same ? `${day(s)}–${full(e)}` : `${sm(s)}–${full(e)}`;
 }
 
 function buildLiveMap(rows: MetricRow[]) {
@@ -81,132 +89,32 @@ function resolvePct(sysKey: string, liveMap: Map<string, Record<string, MetricRo
   return typeof live === "number" ? clamp(live) : clamp(fallback);
 }
 
-/** Extract the raw A/B pair. Priority: meta.active+total > explicit metric keys */
-function rawPair(
-  sysKey: string,
-  sys: Record<string, MetricRow>
-): { a: number | null; b: number | null; rowLabel: string } {
+function rawPair(sysKey: string, sys: Record<string, MetricRow>) {
   const meta = sys[mainKey(sysKey)]?.meta;
   if (meta && typeof meta === "object") {
     const a = meta.active ?? meta.enrolled ?? meta.present ?? null;
     const b = meta.total ?? null;
     if (a !== null && b !== null) {
-      const rowLabel =
+      const lbl =
         sysKey === "MDM"                        ? "Enrollment" :
         sysKey === "LACdrop"                    ? "Parent Usage" :
-        sysKey === "Staff Biometric Attendance" ? "Staff Usage" :
-                                                  "Parent Usage";
-      return { a: Number(a), b: Number(b), rowLabel };
+        sysKey === "Staff Biometric Attendance" ? "Staff Usage" : "Parent Usage";
+      return { a: Number(a), b: Number(b), lbl };
     }
   }
-  // Fallback to explicit stored metric keys
-  const fallbacks: Record<string, [string, string, string]> = {
-    MDM:                          ["devices_enrolled",  "total_devices",  "Enrollment"],
-    LACdrop:                      ["parents_active",     "total_parents",  "Parent Usage"],
-    "Staff Biometric Attendance": ["staff_captured",     "total_staff",    "Staff Usage"],
-    "Toddle Parent":              ["parents_logged_in",  "total_parents",  "Parent Usage"],
+  const fb: Record<string, [string, string, string]> = {
+    MDM:                          ["devices_enrolled", "total_devices",  "Enrollment"],
+    LACdrop:                      ["parents_active",   "total_parents",  "Parent Usage"],
+    "Staff Biometric Attendance": ["staff_captured",   "total_staff",    "Staff Usage"],
+    "Toddle Parent":              ["parents_logged_in","total_parents",  "Parent Usage"],
   };
-  const fb = fallbacks[sysKey];
-  if (fb) {
-    const a = sys[fb[0]]?.metric_value ?? null;
-    const b = sys[fb[1]]?.metric_value ?? null;
-    return {
-      a: a !== null ? Number(a) : null,
-      b: b !== null ? Number(b) : null,
-      rowLabel: fb[2],
-    };
+  const f = fb[sysKey];
+  if (f) {
+    const a = sys[f[0]]?.metric_value ?? null;
+    const b = sys[f[1]]?.metric_value ?? null;
+    return { a: a !== null ? Number(a) : null, b: b !== null ? Number(b) : null, lbl: f[2] };
   }
-  return { a: null, b: null, rowLabel: "Usage" };
-}
-
-// ─── Mobile Progress Bar (replaces donut on mobile) ───────────────────────────
-
-function MobileProgressBar({
-  title,
-  value,
-  colorClass,
-}: {
-  title: string;
-  value: number;
-  colorClass: string; // e.g. "text-amber-500"
-}) {
-  return (
-    <div className="mt-4 sm:hidden">
-      {/* Centered Percentage + Label */}
-      <div className="flex flex-col items-center text-center">
-        <p className="text-2xl font-extrabold leading-none text-gray-900">
-          {value}%
-        </p>
-
-        <p className="mt-1 text-xs font-medium text-gray-500">
-          {title}
-        </p>
-
-      
-      </div>
-
-      {/* Progress Bar */}
-      <div className="mt-3 h-2 w-full rounded-full bg-gray-100">
-        <div
-          className={`h-2 rounded-full bg-current ${colorClass} transition-[width] duration-700 ease-out`}
-          style={{ width: `${value}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─── SVG Percent Ring ─────────────────────────────────────────────────────────
-
-function PercentRing({
-  value,
-  colorClass,
-  label,
-}: {
-  value: number;
-  colorClass: string;
-  label: string;
-}) {
-  const r = 32;
-  const circ = 2 * Math.PI * r;
-
-  // Animate on mount: start empty, then fill to value
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
-  const dashOffset = mounted ? circ - (value / 100) * circ : circ;
-
-  return (
-    // Desktop/tablet only (hidden on mobile)
-    <div className="relative hidden flex-shrink-0 sm:flex sm:h-28 sm:w-28">
-      <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90">
-        <circle cx="40" cy="40" r={r} stroke="#E5E7EB" strokeWidth="7" fill="none" />
-        <circle
-          cx="40"
-          cy="40"
-          r={r}
-          stroke="currentColor"
-          className={colorClass}
-          strokeWidth="7"
-          fill="none"
-          strokeLinecap="round"
-          strokeDasharray={circ}
-          strokeDashoffset={dashOffset}
-          style={{ transition: "stroke-dashoffset 800ms ease-out" }}
-        />
-      </svg>
-
-      {/* More breathing room */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
-        <span className="text-xl font-black leading-tight text-gray-900">
-          {value}%
-        </span>
-        <span className="mt-1 text-[11px] font-semibold tracking-wide text-gray-400">
-          {label}
-        </span>
-      </div>
-    </div>
-  );
+  return { a: null, b: null, lbl: "Usage" };
 }
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
@@ -219,67 +127,74 @@ function StatusBadge({ status }: { status?: string }) {
   return <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">STABLE</span>;
 }
 
-// ─── System Card ──────────────────────────────────────────────────────────────
+// ─── System Card — percentage as bold number, no ring, no bar ─────────────────
 
 function SystemCard({
-  sysKey, label, ringClass, liveMap, lastUpdatedMap, snapshot,
+  sysKey, liveMap, lastUpdatedMap, snapshot,
 }: {
   sysKey: string;
-  label: string;
-  ringClass: string;
   liveMap: Map<string, Record<string, MetricRow>>;
   lastUpdatedMap: Map<string, string>;
   snapshot: WeeklySnapshot;
 }) {
-  const snapCat = snapshot.categories.find(c => c.name === sysKey);
-  const sys     = liveMap.get(sysKey) || {};
-  const pct     = resolvePct(sysKey, liveMap, snapCat?.focusPercent);
-  const pair    = rawPair(sysKey, sys);
-  const ringLabel = sysKey === "MDM" ? "Enrolled" : "Adoption";
-
-  // Note: meta.note takes priority over snapshot notes
-  const note = sys[mainKey(sysKey)]?.meta?.note || snapCat?.notes || null;
+  const snapCat  = snapshot.categories.find(c => c.name === sysKey);
+  const sys      = liveMap.get(sysKey) || {};
+  const pct      = resolvePct(sysKey, liveMap, snapCat?.focusPercent);
+  const { a, b, lbl } = rawPair(sysKey, sys);
+  const colour   = systemColour(sysKey);
+  const logo     = SYSTEM_LOGO[sysKey] ?? null;
+  const note     = sys[mainKey(sysKey)]?.meta?.note || snapCat?.notes || null;
+  const lastUp   = lastUpdatedMap.get(sysKey);
 
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-6">
-      {/* Top row: name + badge on left, ring on right */}
-      <div className="flex items-start justify-between gap-4 sm:gap-6">
+    <div className="rounded-2xl border border-gray-100 bg-white p-4 sm:p-5">
+      <div className="flex items-start justify-between gap-4">
+
+        {/* Left: system info */}
         <div className="min-w-0 flex-1">
+          {/* Logo + name + badge */}
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-bold text-gray-900 sm:text-base">{label}</h3>
+            {logo && (
+              <img
+                src={logo}
+                alt={sysKey}
+                className="h-6 w-6 rounded object-contain"
+              />
+            )}
+            <h3 className="text-sm font-bold text-gray-900">{sysKey}</h3>
             <StatusBadge status={snapCat?.status} />
           </div>
-          <p className="mt-1 text-xs text-gray-300 sm:text-gray-400">
-            Updated: <span className="font-medium text-gray-500">{niceTimeAgo(lastUpdatedMap.get(sysKey))}</span>
+          <p className="mt-1 text-xs text-gray-400">
+            Updated: <span className="font-medium text-gray-500">{niceTimeAgo(lastUp)}</span>
           </p>
 
-          {/* Raw pair — only shown when data exists */}
-          {pair.a !== null && pair.b !== null ? (
-            <p className="mt-3 text-sm font-semibold text-gray-800">
-              {pair.rowLabel}:{" "}
-              <span className="text-base font-bold text-gray-900">{pair.a}/{pair.b}</span>
+          {a !== null && b !== null ? (
+            <p className="mt-3 text-sm text-gray-500">
+              {lbl}:{" "}
+              <span className="font-bold text-gray-900">{a}/{b}</span>
             </p>
           ) : (
-            <p className="mt-3 text-sm text-gray-300">No figures yet</p>
+            <p className="mt-3 text-sm italic text-gray-300">No figures yet</p>
           )}
 
-          {/* Note — only rendered when content exists */}
           {note && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-gray-400 sm:text-sm sm:text-gray-500">
+            <p className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-gray-400">
               <span className="mt-px flex-shrink-0">📌</span>
               <span>{note}</span>
             </p>
           )}
         </div>
 
-                {/* Mobile-only: replace donut with progress bar */}
-                <MobileProgressBar
-                  title={`${label} ${pair.rowLabel || "Usage"}`}
-                  value={pct}
-                  colorClass={ringClass}
-                />
+        {/* Right: percentage — bold number in accent colour */}
+        <div className="flex-shrink-0 text-right">
+          <p className="text-3xl font-black leading-none sm:text-4xl" style={{ color: colour }}>
+            {pct}%
+          </p>
+          <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+            {sysKey === "MDM" ? "Enrolled" : "Adoption"}
+          </p>
+        </div>
 
-        <PercentRing value={pct} colorClass={ringClass} label={ringLabel} />
       </div>
     </div>
   );
@@ -288,16 +203,13 @@ function SystemCard({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ExecutiveDashboard() {
-  const { role } = useAuth();
-  const isAdmin = role === "ADMIN";
-
-  const [snapshot,       setSnapshot]       = useState<WeeklySnapshot>(getDefaultSnapshot());
-  const [weekStart,      setWeekStart]       = useState<string | null>(null);
-  const [weekEnd,        setWeekEnd]         = useState<string | null>(null);
-  const [latestMetrics,  setLatestMetrics]   = useState<MetricRow[]>([]);
-  const [lastUpdated,    setLastUpdated]     = useState<SystemLastUpdated[]>([]);
-  const [loading,        setLoading]         = useState(true);
-  const [loadError,      setLoadError]       = useState<string | null>(null);
+  const [snapshot,      setSnapshot]      = useState<WeeklySnapshot>(getDefaultSnapshot());
+  const [weekStart,     setWeekStart]     = useState<string | null>(null);
+  const [weekEnd,       setWeekEnd]       = useState<string | null>(null);
+  const [latestMetrics, setLatestMetrics] = useState<MetricRow[]>([]);
+  const [lastUpdated,   setLastUpdated]   = useState<SystemLastUpdated[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [loadError,     setLoadError]     = useState<string | null>(null);
 
   const liveMap = useMemo(() => buildLiveMap(latestMetrics), [latestMetrics]);
 
@@ -307,7 +219,6 @@ export default function ExecutiveDashboard() {
     return m;
   }, [lastUpdated]);
 
-  // ── Data fetching — reused by both initial load and 30s poll ─────────────
   const fetchAll = useCallback(async (opts?: { silent?: boolean }) => {
     try {
       if (!opts?.silent) setLoading(true);
@@ -331,12 +242,11 @@ export default function ExecutiveDashboard() {
 
   useEffect(() => {
     fetchAll();
-    // Silent poll every 30s — no full-screen spinner between polls
     const interval = setInterval(() => fetchAll({ silent: true }), 30_000);
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  // ─── Derived values ─────────────────────────────────────────────────────────
+  // ─── Derived ────────────────────────────────────────────────────────────────
 
   const stableCount    = snapshot.categories.filter(c => c.status === "STABLE").length;
   const attentionCount = snapshot.categories.filter(c => c.status === "ATTENTION").length;
@@ -348,7 +258,7 @@ export default function ExecutiveDashboard() {
   const pctToddle = resolvePct("Toddle Parent",              liveMap, snapshot.categories.find(c => c.name === "Toddle Parent")?.focusPercent);
 
   const thisWeekOverall = useMemo(() => {
-    const stability  = Math.round((stableCount / totalSystems) * 100);
+    const stability   = Math.round((stableCount / totalSystems) * 100);
     const adoptionAvg = Math.round((pctLAC + pctStaff + pctToddle) / 3);
     return clamp(Math.round(stability * 0.6 + adoptionAvg * 0.4));
   }, [stableCount, totalSystems, pctLAC, pctStaff, pctToddle]);
@@ -358,8 +268,15 @@ export default function ExecutiveDashboard() {
     return typeof v === "number" ? clamp(v) : Math.max(0, thisWeekOverall - 3);
   }, [snapshot, thisWeekOverall]);
 
-  const delta = thisWeekOverall - lastWeekOverall;
-  const weekLabel = fmtWeekLabel(weekStart, weekEnd) || snapshot.weekLabel;
+  const delta     = thisWeekOverall - lastWeekOverall;
+  const wkLabel   = fmtWeekLabel(weekStart, weekEnd) || snapshot.weekLabel;
+
+  // All system keys: snapshot categories first (preserves order), then any live-only ones
+  const allSystemKeys = useMemo(() => {
+    const fromSnap    = snapshot.categories.map(c => c.name);
+    const fromMetrics = Array.from(liveMap.keys()).filter(k => !fromSnap.includes(k));
+    return [...fromSnap, ...fromMetrics];
+  }, [snapshot.categories, liveMap]);
 
   // ─── Loading ────────────────────────────────────────────────────────────────
 
@@ -374,73 +291,74 @@ export default function ExecutiveDashboard() {
     );
   }
 
-  // ─── Shared blocks ──────────────────────────────────────────────────────────
+  // ─── Blocks ─────────────────────────────────────────────────────────────────
 
-  // API error — subtle, non-blocking
   const errorBanner = loadError && (
     <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
       ⚠ Using cached data — {loadError}
     </div>
   );
 
-  // Week label shown only if we have one — no noise when empty
-  const weekBadge = weekLabel && weekLabel !== "Loading…" && (
+  const weekBadge = wkLabel && wkLabel !== "Loading…" && (
     <span className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-500">
-      {weekLabel}
+      {wkLabel}
     </span>
   );
 
-  // KPI strip — 3 cards, 2-col on mobile, 3-col on sm+
+  // KPI strip — 2-col mobile, 3-col sm+
   const kpiStrip = (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+
+      <div className="rounded-2xl border border-gray-100 bg-white p-4">
         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Digital Health</p>
-        <div className="mt-1.5 flex items-end justify-between gap-1">
+        <div className="mt-2 flex items-end gap-2 leading-none">
           <p className="text-3xl font-black text-gray-900">{thisWeekOverall}%</p>
           <span className={`mb-0.5 text-xs font-bold ${delta >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-            {delta >= 0 ? "▲" : "▼"} {Math.abs(delta)}%
+            {delta >= 0 ? "▲" : "▼"}{Math.abs(delta)}%
           </span>
         </div>
-        <p className="mt-1 text-[10px] text-gray-400">vs last week</p>
+        <p className="mt-1.5 text-[10px] text-gray-400">vs last week</p>
       </div>
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-gray-100 bg-white p-4">
         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Systems Stable</p>
-        <p className="mt-1.5 text-3xl font-black text-gray-900">
-          {stableCount}
-          <span className="ml-1 text-lg font-light text-gray-300">/ {totalSystems}</span>
-        </p>
-        <p className="mt-1 text-[10px] text-gray-400">
-          <span className="font-semibold text-amber-500">{attentionCount}</span> attention
-          {" · "}
-          <span className="font-semibold text-red-500">{criticalCount}</span> critical
+        <div className="mt-2 flex items-end gap-1 leading-none">
+          <p className="text-3xl font-black text-gray-900">{stableCount}</p>
+          <span className="mb-0.5 text-lg font-light text-gray-300">/ {totalSystems}</span>
+        </div>
+        <p className="mt-1.5 text-[10px] text-gray-400">
+          {attentionCount === 0 && criticalCount === 0
+            ? <span className="font-semibold text-emerald-500">All clear</span>
+            : <>
+                {attentionCount > 0 && <span className="font-semibold text-amber-500">{attentionCount} attention </span>}
+                {criticalCount  > 0 && <span className="font-semibold text-red-500">{criticalCount} critical</span>}
+              </>
+          }
         </p>
       </div>
 
-      <div className="col-span-2 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:col-span-1">
+      <div className="col-span-2 rounded-2xl border border-gray-100 bg-white p-4 sm:col-span-1">
         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Follow-up Items</p>
-        <p className={`mt-1.5 text-3xl font-black ${attentionCount + criticalCount > 0 ? "text-amber-500" : "text-emerald-500"}`}>
+        <p className={`mt-2 text-3xl font-black leading-none ${attentionCount + criticalCount > 0 ? "text-amber-500" : "text-emerald-500"}`}>
           {attentionCount + criticalCount}
         </p>
-        <p className="mt-1 text-[10px] text-gray-400">items needing review</p>
+        <p className="mt-1.5 text-[10px] text-gray-400">items needing review</p>
       </div>
+
     </div>
   );
 
-  // 4 system cards — 1-col mobile, 2-col md+
   const liveMetrics = (
     <div>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-base font-bold text-gray-900">Live App Metrics</h2>
         <span className="text-[10px] text-gray-300">Auto-refreshes every 30s</span>
       </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {SYSTEMS.map(({ key, label, ring }) => (
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {allSystemKeys.map(key => (
           <SystemCard
             key={key}
             sysKey={key}
-            label={label}
-            ringClass={ring}
             liveMap={liveMap}
             lastUpdatedMap={lastUpdatedMap}
             snapshot={snapshot}
@@ -450,9 +368,8 @@ export default function ExecutiveDashboard() {
     </div>
   );
 
-  // Alerts — only renders when alerts exist
   const alertsBlock = snapshot.alerts.length > 0 && (
-    <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4 sm:px-6">
+    <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4">
       <p className="mb-2 text-xs font-bold uppercase tracking-widest text-amber-700">
         ⚠ Items Requiring Attention
       </p>
@@ -467,51 +384,25 @@ export default function ExecutiveDashboard() {
     </div>
   );
 
-  // ─── PRESIDENT VIEW ──────────────────────────────────────────────────────────
-
-  if (!isAdmin) {
-    return (
-      <AppShell>
-        <div className="space-y-5">
-          {/* Compact header — week badge only, no clutter */}
-          <div className="flex items-center justify-between gap-3">
-            <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Executive Dashboard</h1>
-            {weekBadge}
-          </div>
-
-          {errorBanner}
-          {kpiStrip}
-          {liveMetrics}
-          {alertsBlock}
-
-          <p className="pb-1 text-center text-xs text-gray-300">
-            IT &amp; Digital Systems — London Academy Casablanca
-          </p>
-        </div>
-      </AppShell>
-    );
-  }
-
-  // ─── ADMIN VIEW ──────────────────────────────────────────────────────────────
-
-  return (
-    <AppShell>
-      <div className="space-y-5">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Executive Dashboard</h1>
-          {weekBadge}
-        </div>
-
-        {errorBanner}
-        {kpiStrip}
-        {liveMetrics}
-        {alertsBlock}
-
-        <p className="pb-1 text-center text-xs text-gray-300">
-          IT &amp; Digital Systems — London Academy Casablanca
-        </p>
-      </div>
-    </AppShell>
+  const footer = (
+    <p className="pb-1 text-center text-xs text-gray-300">
+      IT &amp; Digital Systems — London Academy Casablanca
+    </p>
   );
+
+  const body = (
+    <div className="space-y-4 sm:space-y-5">
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Executive Dashboard</h1>
+        {weekBadge}
+      </div>
+      {errorBanner}
+      {kpiStrip}
+      {liveMetrics}
+      {alertsBlock}
+      {footer}
+    </div>
+  );
+
+  return <AppShell>{body}</AppShell>;
 }
