@@ -1,11 +1,13 @@
 import {
   Chart as ChartJS,
   LineElement,
+  BarElement,
   CategoryScale,
   LinearScale,
   PointElement,
   Tooltip,
   Legend,
+  Filler,
   type ChartOptions,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
@@ -13,451 +15,674 @@ import { useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import { apiFetch } from "../lib/api";
 import type { WeeklySnapshot } from "../lib/reportStore";
-import { formatExecutiveWeekLabel } from "../lib/week";
 
-ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Legend);
+ChartJS.register(LineElement, BarElement, CategoryScale, LinearScale, PointElement, Tooltip, Legend, Filler);
 
-type HistoryRow = {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type WeekRow = {
   id: string;
+  week_start: string;
+  week_end: string;
+  snapshot_json: WeeklySnapshot | null;
+  created_at: string;
+  // derived
   weekLabel: string;
-  week_start?: string;
-  week_end?: string;
-  created_at?: string;
-
-  status: "STABLE" | "ATTENTION" | "CRITICAL";
-
-  overallPercent: number; // 0–100
+  monthKey: string;        // "2026-01"
+  monthLabel: string;      // "January 2026"
+  overallPct: number;
   stableCount: number;
   totalSystems: number;
-
-  highlights: string;
+  status: "STABLE" | "ATTENTION" | "CRITICAL";
+  systemPcts: Record<string, number>;
 };
 
-function clampPercent(v: any) {
+type MonthGroup = {
+  monthKey: string;
+  monthLabel: string;
+  weeks: WeekRow[];
+  // aggregated
+  avgOverall: number;
+  minOverall: number;
+  maxOverall: number;
+  status: "STABLE" | "ATTENTION" | "CRITICAL";
+  isCurrentMonth: boolean;
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const CORE_SYSTEMS = ["MDM", "LACdrop", "Staff Biometric Attendance", "Toddle Parent"] as const;
+const SYSTEM_COLORS: Record<string, string> = {
+  MDM:                          "#F59E0B",
+  LACdrop:                      "#2563EB",
+  "Staff Biometric Attendance": "#0D9488",
+  "Toddle Parent":              "#06B6D4",
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function clamp(v: any): number {
   const n = Number(v) || 0;
   return Math.max(0, Math.min(100, n));
 }
 
-function statusBadge(status: HistoryRow["status"]) {
-  const base = "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border";
-  if (status === "STABLE") return `${base} bg-green-50 text-green-800 border-green-200`;
-  if (status === "ATTENTION") return `${base} bg-amber-50 text-amber-800 border-amber-200`;
-  return `${base} bg-red-50 text-red-800 border-red-200`;
+function fmtWeekLabel(ws: string, we: string): string {
+  const s = new Date(ws + "T12:00:00Z");
+  const e = new Date(we + "T12:00:00Z");
+  const sameMonth = s.getUTCMonth() === e.getUTCMonth() && s.getUTCFullYear() === e.getUTCFullYear();
+  const day = (d: Date) => String(d.getUTCDate()).padStart(2, "0");
+  const mon = (d: Date) => d.toLocaleString("default", { month: "short" });
+  if (sameMonth) return `${day(s)}–${day(e)} ${mon(e)} ${e.getUTCFullYear()}`;
+  return `${day(s)} ${mon(s)}–${day(e)} ${mon(e)} ${e.getUTCFullYear()}`;
 }
 
-function trendPill(delta: number) {
-  const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold border";
-  if (delta > 0) return `${base} bg-green-50 text-green-800 border-green-200`;
-  if (delta < 0) return `${base} bg-red-50 text-red-800 border-red-200`;
-  return `${base} bg-gray-50 text-gray-700 border-gray-200`;
+function monthKey(ws: string): string {
+  return ws.slice(0, 7); // "2026-01"
 }
 
-function deltaLabel(delta: number) {
-  if (delta > 0) return `↑ +${delta}%`;
-  if (delta < 0) return `↓ ${delta}%`;
-  return "→ 0%";
+function monthLabel(key: string): string {
+  const [y, m] = key.split("-");
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return d.toLocaleString("default", { month: "long", year: "numeric" });
 }
 
-/**
- * Old logic (snapshot_json compatibility)
- * Overall = 60% stability + 40% avg adoption (excluding MDM)
- */
-function deriveOverallFromSnapshot(snapshot?: WeeklySnapshot) {
-  const cats = snapshot?.categories || [];
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function deriveFromSnapshot(snap: WeeklySnapshot | null): {
+  overallPct: number;
+  stableCount: number;
+  totalSystems: number;
+  status: WeekRow["status"];
+  systemPcts: Record<string, number>;
+} {
+  const cats = snap?.categories || [];
   const total = cats.length || 1;
+  const stable = cats.filter(c => c.status === "STABLE").length;
+  const hasCritical  = cats.some(c => c.status === "CRITICAL");
+  const hasAttention = cats.some(c => c.status === "ATTENTION");
 
-  const stable = cats.filter((c) => c.status === "STABLE").length;
-  const stabilityPct = Math.round((stable / total) * 100);
-
-  const userCats = cats.filter((c) => c.name !== "MDM");
-  const adoptionAvg = Math.round(
-    userCats.reduce((sum, c) => sum + clampPercent((c as any).focusPercent), 0) / (userCats.length || 1)
+  const userCats = cats.filter(c => c.name !== "MDM");
+  const adoptAvg = Math.round(
+    userCats.reduce((s, c) => s + clamp(c.focusPercent), 0) / (userCats.length || 1)
   );
+  const stabilityPct = Math.round((stable / total) * 100);
+  const overallPct   = clamp(Math.round(stabilityPct * 0.6 + adoptAvg * 0.4));
 
-  const overall = Math.round(stabilityPct * 0.6 + adoptionAvg * 0.4);
+  // per-system pcts — check metrics block first, then focusPercent
+  const systemPcts: Record<string, number> = {};
+  for (const sys of CORE_SYSTEMS) {
+    const cat = cats.find(c => c.name === sys);
+    if (!cat) { systemPcts[sys] = 0; continue; }
+    const m = cat.metrics || {};
+    const v =
+      typeof m.coverage_percent === "number" ? m.coverage_percent :
+      typeof m.usage_percent    === "number" ? m.usage_percent    :
+      typeof m.adoption_percent === "number" ? m.adoption_percent :
+      cat.focusPercent;
+    systemPcts[sys] = clamp(v);
+  }
+
   return {
-    overallPercent: clampPercent(overall),
+    overallPct,
     stableCount: stable,
     totalSystems: total,
+    status: hasCritical ? "CRITICAL" : hasAttention ? "ATTENTION" : "STABLE",
+    systemPcts,
   };
 }
 
-function deriveStatusFromSnapshot(snapshot?: WeeklySnapshot): HistoryRow["status"] {
-  const cats = snapshot?.categories || [];
-  const hasCritical = cats.some((c: any) => c.status === "CRITICAL");
-  const hasAttention = cats.some((c: any) => c.status === "ATTENTION");
-  return hasCritical ? "CRITICAL" : hasAttention ? "ATTENTION" : "STABLE";
+function statusColor(s: WeekRow["status"]): string {
+  if (s === "CRITICAL")  return "text-red-600";
+  if (s === "ATTENTION") return "text-amber-500";
+  return "text-emerald-500";
 }
 
-function buildHighlightsFromSnapshot(snapshot?: WeeklySnapshot) {
-  const cats = snapshot?.categories || [];
-  const top = cats
-    .slice(0, 4)
-    .map((c: any) => {
-      const p = clampPercent(c.focusPercent);
-      const label =
-        c.name === "MDM" ? "Compliance" :
-        c.name === "Online Test" ? "Progress" :
-        "Usage";
-      return `${c.name}: ${p}% ${label}`;
-    })
-    .slice(0, 3);
-
-  return top.length ? top.join(" • ") : "(no details)";
+function statusBg(s: WeekRow["status"]): string {
+  if (s === "CRITICAL")  return "border-red-200 bg-red-50";
+  if (s === "ATTENTION") return "border-amber-200 bg-amber-50";
+  return "border-emerald-200 bg-emerald-50";
 }
 
-/**
- * New schema mapping (weekly_reports)
- * Expected fields:
- * - week_start, week_end
- * - executive_label (optional; we can regenerate)
- * - overall_percent
- * - systems_stable, systems_total
- * - status
- * Optional (if you include them later):
- * - highlights, or notes/system_metrics summary
- */
-function mapFromWeeklyReportsRow(r: any): HistoryRow {
-  const week_start = r.week_start ? String(r.week_start) : undefined;
-  const week_end = r.week_end ? String(r.week_end) : undefined;
-
-  const computedLabel =
-    week_start && week_end ? formatExecutiveWeekLabel(week_start, week_end) : "(unknown week)";
-
-  const weekLabel = String(r.executive_label || computedLabel);
-
-  const overallPercent = clampPercent(r.overall_percent);
-  const stableCount = Number(r.systems_stable ?? 0);
-  const totalSystems = Number(r.systems_total ?? 0);
-
-  const status: HistoryRow["status"] =
-    r.status === "CRITICAL" || r.status === "ATTENTION" || r.status === "STABLE"
-      ? r.status
-      : "STABLE";
-
-  const highlights =
-    typeof r.highlights === "string" && r.highlights.trim()
-      ? r.highlights.trim()
-      : "(system breakdown available in details)";
-
-  return {
-    id: String(r.id),
-    weekLabel,
-    week_start,
-    week_end,
-    created_at: r.created_at ? String(r.created_at) : undefined,
-    status,
-    overallPercent,
-    stableCount,
-    totalSystems,
-    highlights,
-  };
+function statusLabel(s: WeekRow["status"]): string {
+  if (s === "CRITICAL")  return "Critical";
+  if (s === "ATTENTION") return "Attention";
+  return "Stable";
 }
+
+function deltaArrow(d: number) {
+  if (d > 0) return { symbol: "▲", cls: "text-emerald-500" };
+  if (d < 0) return { symbol: "▼", cls: "text-red-500" };
+  return { symbol: "→", cls: "text-gray-400" };
+}
+
+// ─── Mini sparkline bar ────────────────────────────────────────────────────────
+
+function Sparkbar({ values, color }: { values: number[]; color: string }) {
+  if (!values.length) return <span className="text-xs text-gray-300">—</span>;
+  const max = Math.max(...values, 1);
+  return (
+    <div className="flex items-end gap-0.5 h-6">
+      {values.map((v, i) => (
+        <div
+          key={i}
+          className="w-1.5 rounded-sm transition-all"
+          style={{
+            height: `${Math.max(4, (v / max) * 24)}px`,
+            backgroundColor: color,
+            opacity: i === values.length - 1 ? 1 : 0.45 + (i / values.length) * 0.55,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Week Card ────────────────────────────────────────────────────────────────
+
+function WeekCard({ row, delta }: { row: WeekRow; delta: number }) {
+  const arr = deltaArrow(delta);
+  return (
+    <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold text-gray-500">{row.weekLabel}</p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={`text-2xl font-black ${statusColor(row.status)}`}>
+              {row.overallPct}%
+            </span>
+            {delta !== 0 && (
+              <span className={`text-xs font-bold ${arr.cls}`}>
+                {arr.symbol} {Math.abs(delta)}%
+              </span>
+            )}
+          </div>
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusBg(row.status)} ${statusColor(row.status)}`}>
+          {statusLabel(row.status)}
+        </span>
+      </div>
+
+      {/* System pct bars */}
+      <div className="mt-3 space-y-1.5">
+        {CORE_SYSTEMS.map(sys => {
+          const pct = row.systemPcts[sys] ?? 0;
+          const color = SYSTEM_COLORS[sys];
+          return (
+            <div key={sys} className="flex items-center gap-2">
+              <span className="w-28 flex-shrink-0 truncate text-[10px] text-gray-400">{sys}</span>
+              <div className="relative flex-1 h-1.5 rounded-full bg-gray-100">
+                <div
+                  className="absolute left-0 top-0 h-1.5 rounded-full"
+                  style={{ width: `${pct}%`, backgroundColor: color }}
+                />
+              </div>
+              <span className="w-7 text-right text-[10px] font-semibold text-gray-600">{pct}%</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Stable count */}
+      <p className="mt-2.5 text-[10px] text-gray-400">
+        {row.stableCount}/{row.totalSystems} systems stable
+      </p>
+    </div>
+  );
+}
+
+// ─── Month Group Card ─────────────────────────────────────────────────────────
+
+function MonthCard({
+  group,
+  deltaFromPrev,
+  allWeeksForSparklines,
+}: {
+  group: MonthGroup;
+  deltaFromPrev: number;
+  allWeeksForSparklines: WeekRow[];
+}) {
+  const [expanded, setExpanded] = useState(group.isCurrentMonth);
+  const arr = deltaArrow(deltaFromPrev);
+
+  // Build delta map within this group's weeks
+  const weeksChronological = [...group.weeks].sort(
+    (a, b) => new Date(a.week_start).getTime() - new Date(b.week_start).getTime()
+  );
+
+  const weekDeltaMap = new Map<string, number>();
+  for (let i = 0; i < weeksChronological.length; i++) {
+    const prev = allWeeksForSparklines.find(
+      w => new Date(w.week_start).getTime() < new Date(weeksChronological[i].week_start).getTime()
+    );
+    weekDeltaMap.set(
+      weeksChronological[i].id,
+      prev ? weeksChronological[i].overallPct - prev.overallPct : 0
+    );
+  }
+
+  return (
+    <div className={`rounded-2xl border shadow-sm overflow-hidden ${group.isCurrentMonth ? "border-blue-100" : "border-gray-100"}`}>
+      {/* Month header — always visible */}
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="w-full bg-white px-5 py-4 text-left hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {/* Month label + current badge */}
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-gray-900">{group.monthLabel}</h3>
+                {group.isCurrentMonth && (
+                  <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-600">
+                    Current
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-gray-400">
+                {group.weeks.length} week{group.weeks.length !== 1 ? "s" : ""}
+                {!group.isCurrentMonth && ` · Avg ${group.avgOverall}% · Range ${group.minOverall}–${group.maxOverall}%`}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {/* Sparkline for the month */}
+            <div className="hidden sm:block">
+              <Sparkbar
+                values={weeksChronological.map(w => w.overallPct)}
+                color="#2563EB"
+              />
+            </div>
+
+            {/* Avg % + delta */}
+            <div className="text-right">
+              <div className={`text-xl font-black ${statusColor(group.status)}`}>
+                {group.isCurrentMonth ? group.weeks[0]?.overallPct ?? "—" : group.avgOverall}%
+              </div>
+              {deltaFromPrev !== 0 && (
+                <div className={`text-xs font-bold ${arr.cls}`}>
+                  {arr.symbol} {Math.abs(deltaFromPrev)}%
+                </div>
+              )}
+            </div>
+
+            {/* Status badge */}
+            <span className={`hidden md:inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusBg(group.status)} ${statusColor(group.status)}`}>
+              {statusLabel(group.status)}
+            </span>
+
+            {/* Chevron */}
+            <svg
+              className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`}
+              viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+            >
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </div>
+        </div>
+      </button>
+
+      {/* Expanded weeks */}
+      {expanded && (
+        <div className="border-t border-gray-100 bg-[#F7F8FA] px-4 py-4">
+          {/* System sparklines across the month */}
+          {!group.isCurrentMonth && weeksChronological.length > 1 && (
+            <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {CORE_SYSTEMS.map(sys => (
+                <div key={sys} className="rounded-xl border border-gray-100 bg-white px-3 py-2.5">
+                  <p className="text-[10px] font-semibold text-gray-400 truncate">{sys}</p>
+                  <div className="mt-1.5">
+                    <Sparkbar
+                      values={weeksChronological.map(w => w.systemPcts[sys] ?? 0)}
+                      color={SYSTEM_COLORS[sys]}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs font-bold text-gray-700">
+                    {weeksChronological[weeksChronological.length - 1]?.systemPcts[sys] ?? 0}%
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Individual week cards */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {weeksChronological.map(w => (
+              <WeekCard
+                key={w.id}
+                row={w}
+                delta={weekDeltaMap.get(w.id) ?? 0}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function History() {
-  const [rows, setRows] = useState<HistoryRow[]>([]);
+  const [rows,    setRows]    = useState<WeekRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [statusFilter, setStatusFilter] = useState<"ALL" | HistoryRow["status"]>("ALL");
-  const [q, setQ] = useState("");
+  const [error,   setError]   = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
+    let alive = true;
     (async () => {
       try {
         setLoading(true);
-        setError(null);
+        const res = await apiFetch<{ items: any[] }>("/api/history?limit=52");
+        if (!alive) return;
 
-        // Keep your endpoint, but it should now return weekly_reports rows.
-        // Backward-compatible: if it still returns snapshot_json, we still handle it.
-        const res = await apiFetch<{ items: any[] }>("/api/history?limit=30");
-        if (cancelled) return;
-
-        const mapped: HistoryRow[] = (res.items || []).map((r) => {
-          // If this is old storage, r.snapshot_json exists
-          const snap: WeeklySnapshot | undefined = r.snapshot_json;
-
-          // If it looks like weekly_reports row, use new mapping
-          const hasNewSchema =
-            r.week_start &&
-            r.week_end &&
-            (r.overall_percent !== undefined || r.systems_total !== undefined || r.executive_label);
-
-          if (hasNewSchema) {
-            return mapFromWeeklyReportsRow(r);
-          }
-
-          // Old behavior fallback
-          const week_start = r.week_start ? String(r.week_start) : undefined;
-          const week_end = r.week_end ? String(r.week_end) : undefined;
-
-          const label =
-            week_start && week_end
-              ? formatExecutiveWeekLabel(week_start, week_end)
-              : snap?.weekLabel || `${r.week_start}–${r.week_end}`;
-
-          const { overallPercent, stableCount, totalSystems } = deriveOverallFromSnapshot(snap);
-          const status = deriveStatusFromSnapshot(snap);
-          const highlights = buildHighlightsFromSnapshot(snap);
-
-          return {
-            id: String(r.id),
-            weekLabel: label,
-            week_start,
-            week_end,
-            created_at: r.created_at ? String(r.created_at) : undefined,
-            status,
-            overallPercent,
-            stableCount,
-            totalSystems,
-            highlights,
-          };
-        });
-
-        // Sort newest first by week_start
-        mapped.sort((a, b) => {
-          const ta = a.week_start ? new Date(a.week_start).getTime() : 0;
-          const tb = b.week_start ? new Date(b.week_start).getTime() : 0;
-          return tb - ta;
-        });
+        const mapped: WeekRow[] = (res.items || [])
+          .filter(r => r.week_start && r.week_end)
+          .map(r => {
+            const snap = r.snapshot_json as WeeklySnapshot | null;
+            const derived = deriveFromSnapshot(snap);
+            const ws = String(r.week_start);
+            const we = String(r.week_end);
+            const mk = monthKey(ws);
+            return {
+              id: String(r.id),
+              week_start: ws,
+              week_end:   we,
+              snapshot_json: snap,
+              created_at: String(r.created_at || ""),
+              weekLabel:   fmtWeekLabel(ws, we),
+              monthKey:    mk,
+              monthLabel:  monthLabel(mk),
+              ...derived,
+            };
+          })
+          // Newest first
+          .sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime());
 
         setRows(mapped);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || "Failed to load history");
+        if (alive) setError(e?.message || "Failed to load history");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { alive = false; };
   }, []);
 
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (statusFilter !== "ALL" && r.status !== statusFilter) return false;
-      if (!s) return true;
-      return r.weekLabel.toLowerCase().includes(s) || r.highlights.toLowerCase().includes(s);
-    });
-  }, [rows, statusFilter, q]);
+  // ─── Month grouping logic ──────────────────────────────────────────────────
+  // Rule: a month group is shown as a monthly card ONLY when it is a
+  // *completed* month (i.e. monthKey < currentMonthKey).
+  // The current month always shows as individual weeks.
 
-  const kpis = useMemo(() => {
-    const total = rows.length || 1;
-    const stable = rows.filter((r) => r.status === "STABLE").length;
-    const attn = rows.filter((r) => r.status === "ATTENTION").length;
-    const crit = rows.filter((r) => r.status === "CRITICAL").length;
-    const avgOverall = Math.round(rows.reduce((sum, r) => sum + r.overallPercent, 0) / total);
-    return { total, stable, attn, crit, avgOverall };
+  const curMonthKey = currentMonthKey();
+
+  const monthGroups = useMemo<MonthGroup[]>(() => {
+    const groupMap = new Map<string, WeekRow[]>();
+    for (const row of rows) {
+      if (!groupMap.has(row.monthKey)) groupMap.set(row.monthKey, []);
+      groupMap.get(row.monthKey)!.push(row);
+    }
+
+    return Array.from(groupMap.entries())
+      .map(([mk, weeks]) => {
+        const overalls = weeks.map(w => w.overallPct);
+        const avgOverall = Math.round(overalls.reduce((s, v) => s + v, 0) / (overalls.length || 1));
+        const hasCritical  = weeks.some(w => w.status === "CRITICAL");
+        const hasAttention = weeks.some(w => w.status === "ATTENTION");
+        return {
+          monthKey: mk,
+          monthLabel: monthLabel(mk),
+          weeks,
+          avgOverall,
+          minOverall: Math.min(...overalls),
+          maxOverall: Math.max(...overalls),
+          status: (hasCritical ? "CRITICAL" : hasAttention ? "ATTENTION" : "STABLE") as MonthGroup["status"],
+          isCurrentMonth: mk === curMonthKey,
+        };
+      })
+      // Newest month first
+      .sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  }, [rows, curMonthKey]);
+
+  // ─── KPI stats ────────────────────────────────────────────────────────────
+
+  const stats = useMemo(() => {
+    if (!rows.length) return null;
+    const total     = rows.length;
+    const avgAll    = Math.round(rows.reduce((s, r) => s + r.overallPct, 0) / total);
+    const bestWeek  = [...rows].sort((a, b) => b.overallPct - a.overallPct)[0];
+    const worstWeek = [...rows].sort((a, b) => a.overallPct - b.overallPct)[0];
+
+    // Biggest single-week improvement
+    const sorted = [...rows].sort((a, b) => new Date(a.week_start).getTime() - new Date(b.week_start).getTime());
+    let bestImprovement: { delta: number; week: WeekRow } | null = null;
+    for (let i = 1; i < sorted.length; i++) {
+      const d = sorted[i].overallPct - sorted[i - 1].overallPct;
+      if (!bestImprovement || d > bestImprovement.delta) {
+        bestImprovement = { delta: d, week: sorted[i] };
+      }
+    }
+
+    // Current streak
+    let streak = 0;
+    let streakStatus: "stable" | "attention" = "stable";
+    for (const r of rows) { // rows are newest-first
+      if (r.status === "STABLE") {
+        if (streakStatus === "stable" || streak === 0) { streak++; streakStatus = "stable"; }
+        else break;
+      } else {
+        if (streakStatus === "attention" || streak === 0) { streak++; streakStatus = "attention"; }
+        else break;
+      }
+    }
+
+    return { total, avgAll, bestWeek, worstWeek, bestImprovement, streak, streakStatus };
   }, [rows]);
 
-  const trend = useMemo(() => {
-    // Oldest → newest on chart
-    const chronological = [...filtered].reverse();
-    const labels = chronological.map((r) => r.weekLabel);
-    const values = chronological.map((r) => r.overallPercent);
+  // ─── Overall trend chart (chronological) ──────────────────────────────────
 
+  const trendData = useMemo(() => {
+    const sorted = [...rows].sort((a, b) => new Date(a.week_start).getTime() - new Date(b.week_start).getTime());
+    return {
+      labels: sorted.map(r => r.weekLabel),
+      datasets: [{
+        label: "Overall Digital Health",
+        data: sorted.map(r => r.overallPct),
+        borderColor: "#2563EB",
+        backgroundColor: "rgba(37,99,235,0.07)",
+        fill: true,
+        tension: 0.35,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+      }],
+    };
+  }, [rows]);
+
+  // Per-system trend
+  const systemTrendData = useMemo(() => {
+    const sorted = [...rows].sort((a, b) => new Date(a.week_start).getTime() - new Date(b.week_start).getTime());
+    const labels = sorted.map(r => r.weekLabel);
     return {
       labels,
-      datasets: [
-        {
-          label: "Overall Digital Health",
-          data: values,
-          borderColor: "#2563EB",
-          backgroundColor: "rgba(37,99,235,0.12)",
-          fill: true,
-          tension: 0.35,
-          pointRadius: 3,
-        },
-      ],
+      datasets: CORE_SYSTEMS.map(sys => ({
+        label: sys,
+        data: sorted.map(r => r.systemPcts[sys] ?? 0),
+        borderColor: SYSTEM_COLORS[sys],
+        backgroundColor: "transparent",
+        tension: 0.3,
+        pointRadius: 2,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+      })),
     };
-  }, [filtered]);
+  }, [rows]);
 
-  const trendOptions: ChartOptions<"line"> = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y}%` } },
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          max: 100,
-          ticks: { callback: (v) => `${v}%` },
-          grid: { color: "rgba(0,0,0,0.06)" },
-        },
-        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
-      },
-    }),
-    []
-  );
+  const lineOptions: ChartOptions<"line"> = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}%` } },
+    },
+    scales: {
+      y: { beginAtZero: true, max: 100, ticks: { callback: v => `${v}%` }, grid: { color: "rgba(0,0,0,0.05)" } },
+      x: { grid: { display: false }, ticks: { maxRotation: 30, autoSkip: true, font: { size: 10 } } },
+    },
+  }), []);
 
-  const deltaMap = useMemo(() => {
+  // ─── Delta between month groups ───────────────────────────────────────────
+  const monthDeltaMap = useMemo(() => {
     const m = new Map<string, number>();
-    for (let i = 0; i < rows.length; i++) {
-      const current = rows[i];
-      const prev = rows[i + 1]; // older
-      const delta = prev ? current.overallPercent - prev.overallPercent : 0;
-      m.set(current.id, delta);
+    for (let i = 0; i < monthGroups.length; i++) {
+      const prev = monthGroups[i + 1];
+      m.set(monthGroups[i].monthKey, prev ? monthGroups[i].avgOverall - prev.avgOverall : 0);
     }
     return m;
-  }, [rows]);
+  }, [monthGroups]);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <AppShell>
+        <div className="flex items-center gap-2 py-16 text-sm text-gray-400">
+          <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-200 border-t-gray-500" />
+          Loading history…
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
-      <div className="space-y-8">
+      <div className="space-y-6">
+
         {/* Header */}
-        <section>
-          <h1 className="text-2xl font-bold text-gray-900">History (Executive View)</h1>
-          <p className="text-sm text-gray-600">Trend and summary of weekly IT system performance.</p>
-          {loading ? <p className="mt-2 text-sm text-gray-500">Loading…</p> : null}
-          {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
-        </section>
-
-        {/* KPI Strip */}
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="rounded-2xl border bg-white p-4">
-            <p className="text-xs font-semibold text-gray-600">Weeks Tracked</p>
-            <p className="mt-2 text-3xl font-bold text-gray-900">{kpis.total}</p>
-          </div>
-          <div className="rounded-2xl border bg-white p-4">
-            <p className="text-xs font-semibold text-gray-600">Stable Weeks</p>
-            <p className="mt-2 text-3xl font-bold text-gray-900">{kpis.stable}</p>
-            <p className="mt-1 text-xs text-gray-500">
-              Attention: {kpis.attn} • Critical: {kpis.crit}
+        <div>
+          <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">History</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Weekly and monthly performance across all IT systems.
+          </p>
+          {error && (
+            <p className="mt-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              ⚠ {error}
             </p>
-          </div>
-          <div className="rounded-2xl border bg-white p-4">
-            <p className="text-xs font-semibold text-gray-600">Average Overall</p>
-            <p className="mt-2 text-3xl font-bold text-gray-900">{kpis.avgOverall}%</p>
-          </div>
-          <div className="rounded-2xl border bg-white p-4">
-            <p className="text-xs font-semibold text-gray-600">Filter Applied</p>
-            <p className="mt-3 text-sm font-semibold text-gray-900">
-              {statusFilter === "ALL" ? "All statuses" : statusFilter}
-            </p>
-            <p className="mt-1 text-xs text-gray-500">{filtered.length} weeks shown</p>
-          </div>
-        </section>
-
-        {/* Filters */}
-        <section className="rounded-2xl border bg-white p-5">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Status</label>
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as any)}
-                  className="rounded-xl border px-3 py-2 text-sm bg-white"
-                >
-                  <option value="ALL">All</option>
-                  <option value="STABLE">Stable</option>
-                  <option value="ATTENTION">Attention</option>
-                  <option value="CRITICAL">Critical</option>
-                </select>
-              </div>
-
-              <div className="min-w-[260px]">
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Search</label>
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search week or highlights…"
-                  className="w-full rounded-xl border px-3 py-2 text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="text-xs text-gray-500">Tip: Use filters to view only “Attention/Critical” weeks.</div>
-          </div>
-        </section>
-
-        {/* Trend */}
-        <section className="rounded-2xl border bg-white p-6">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">Overall Performance Trend</h2>
-              <p className="text-sm text-gray-600">Overall score over the selected weeks.</p>
-            </div>
-          </div>
-
-          <div className="mt-4 h-[260px]">
-            <Line data={trend} options={trendOptions} />
-          </div>
-        </section>
-
-        {/* Executive Table */}
-        <section className="rounded-2xl border bg-white p-6">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">Weekly Summary Table</h2>
-              <p className="text-sm text-gray-600">Quick scan of scores, stability, risk, and highlights.</p>
-            </div>
-          </div>
-
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-[980px] w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs font-semibold text-gray-600">
-                  <th className="py-2 pr-3">Week</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Overall</th>
-                  <th className="py-2 pr-3">Δ</th>
-                  <th className="py-2 pr-3">Stable Systems</th>
-                  <th className="py-2 pr-3">Highlights</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y">
-                {filtered.map((r) => {
-                  const delta = deltaMap.get(r.id) ?? 0;
-                  return (
-                    <tr key={r.id} className="text-gray-800">
-                      <td className="py-3 pr-3">
-                        <div className="font-semibold">{r.weekLabel}</div>
-                        {r.week_start && r.week_end ? (
-                          <div className="text-xs text-gray-500">
-                            {r.week_start} to {r.week_end}
-                          </div>
-                        ) : null}
-                      </td>
-
-                      <td className="py-3 pr-3">
-                        <span className={statusBadge(r.status)}>{r.status}</span>
-                      </td>
-
-                      <td className="py-3 pr-3 font-semibold">{r.overallPercent}%</td>
-
-                      <td className="py-3 pr-3">
-                        <span className={trendPill(delta)}>{deltaLabel(delta)}</span>
-                      </td>
-
-                      <td className="py-3 pr-3">
-                        {r.stableCount} / {r.totalSystems}
-                      </td>
-
-                      <td className="py-3 pr-3 text-gray-700">{r.highlights}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-
-            {!filtered.length && !loading ? (
-              <p className="mt-4 text-sm text-gray-600">No weeks match the selected filters.</p>
-            ) : null}
-          </div>
-        </section>
-
-        <div className="rounded-xl border bg-gray-50 p-4 text-sm text-gray-600">
-          This view is read-only. It summarizes weekly reports for executive reference.
+          )}
         </div>
+
+        {/* ── KPI callout strip ─────────────────────────────────────────── */}
+        {stats && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+
+            {/* Avg overall */}
+            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Overall Average</p>
+              <p className="mt-1.5 text-3xl font-black text-gray-900">{stats.avgAll}%</p>
+              <p className="mt-1 text-[10px] text-gray-400">across {stats.total} weeks</p>
+            </div>
+
+            {/* Best week */}
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Best Week</p>
+              <p className="mt-1.5 text-3xl font-black text-emerald-600">{stats.bestWeek.overallPct}%</p>
+              <p className="mt-1 text-[10px] text-emerald-600/70">{stats.bestWeek.weekLabel}</p>
+            </div>
+
+            {/* Biggest jump */}
+            {stats.bestImprovement && stats.bestImprovement.delta > 0 && (
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Biggest Jump</p>
+                <p className="mt-1.5 text-3xl font-black text-blue-600">+{stats.bestImprovement.delta}%</p>
+                <p className="mt-1 text-[10px] text-blue-600/70">{stats.bestImprovement.week.weekLabel}</p>
+              </div>
+            )}
+
+            {/* Streak */}
+            <div className={`rounded-2xl border p-4 shadow-sm ${
+              stats.streakStatus === "stable"
+                ? "border-emerald-100 bg-emerald-50"
+                : "border-amber-100 bg-amber-50"
+            }`}>
+              <p className={`text-[10px] font-bold uppercase tracking-widest ${
+                stats.streakStatus === "stable" ? "text-emerald-600" : "text-amber-600"
+              }`}>
+                {stats.streakStatus === "stable" ? "Stable Streak" : "Attention Streak"}
+              </p>
+              <p className={`mt-1.5 text-3xl font-black ${
+                stats.streakStatus === "stable" ? "text-emerald-600" : "text-amber-600"
+              }`}>
+                {stats.streak}w
+              </p>
+              <p className={`mt-1 text-[10px] ${
+                stats.streakStatus === "stable" ? "text-emerald-600/70" : "text-amber-600/70"
+              }`}>
+                consecutive weeks
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Trend charts ─────────────────────────────────────────────── */}
+        {rows.length > 1 && (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+
+            {/* Overall trend */}
+            <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+              <h2 className="text-sm font-bold text-gray-900">Overall Digital Health</h2>
+              <p className="mt-0.5 text-xs text-gray-400">Weekly trend</p>
+              <div className="mt-4 h-[180px]">
+                <Line data={trendData} options={lineOptions} />
+              </div>
+            </div>
+
+            {/* Per-system trend */}
+            <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+              <h2 className="text-sm font-bold text-gray-900">System Trends</h2>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {CORE_SYSTEMS.map(sys => (
+                  <span key={sys} className="flex items-center gap-1 text-[10px] text-gray-500">
+                    <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: SYSTEM_COLORS[sys] }} />
+                    {sys}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-3 h-[180px]">
+                <Line data={systemTrendData} options={lineOptions} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Month / week groups ───────────────────────────────────────── */}
+        {monthGroups.length === 0 && !loading && (
+          <div className="rounded-2xl border border-gray-100 bg-white px-6 py-10 text-center">
+            <p className="text-sm font-semibold text-gray-500">No history yet</p>
+            <p className="mt-1 text-xs text-gray-400">
+              Run a weekly rollup from Updates to start building history.
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {monthGroups.map(group => (
+            <MonthCard
+              key={group.monthKey}
+              group={group}
+              deltaFromPrev={monthDeltaMap.get(group.monthKey) ?? 0}
+              allWeeksForSparklines={rows}
+            />
+          ))}
+        </div>
+
+        <p className="pb-2 text-center text-xs text-gray-300">
+          IT &amp; Digital Systems — London Academy Casablanca
+        </p>
       </div>
     </AppShell>
   );

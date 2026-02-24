@@ -555,7 +555,7 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
       bySystem.get(k).push(r);
     }
 
-    const SYSTEMS = ["MDM", "LACdrop", "Toddle Parent", "Staff Attendance", "Online Test"];
+    const SYSTEMS = ["MDM", "LACdrop", "Toddle Parent", "Staff Biometric Attendance"];
 
     function getLatestMetric(system_key, metric_key) {
       const list = bySystem.get(`${system_key}::${metric_key}`) || [];
@@ -565,20 +565,12 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
     // status rules:
     // - health_code=3 => CRITICAL
     // - health_code=2 => ATTENTION
-    // - MDM dex_attempts>0 => ATTENTION
     // else STABLE
     function resolveStatus(systemKey) {
       const hc = getLatestMetric(systemKey, "health_code");
       const code = hc ? Number(hc.metric_value) : null;
-
       if (code === 3) return "CRITICAL";
       if (code === 2) return "ATTENTION";
-
-      if (systemKey === "MDM") {
-        const dex = getLatestMetric("MDM", "dex_attempts");
-        if (dex && Number(dex.metric_value) > 0) return "ATTENTION";
-      }
-
       return "STABLE";
     }
 
@@ -588,8 +580,8 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
       // Which metric drives the % tile
       let mainKey = "adoption_percent";
       if (isMDM) mainKey = "coverage_percent";
-      if (systemKey === "Staff Attendance") mainKey = "usage_percent";
-      if (systemKey === "Online Test") mainKey = "progress_percent";
+      if (systemKey === "Staff Biometric Attendance") mainKey = "usage_percent";
+      if (systemKey === "Toddle Parent") mainKey = "progress_percent";
 
       const main = getLatestMetric(systemKey, mainKey);
       const focusPercent = pct(main?.metric_value ?? 0);
@@ -597,12 +589,12 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
       const metricsBlock = {};
       const importantKeys =
         systemKey === "MDM"
-          ? ["coverage_percent", "dex_attempts", "devices_enrolled", "total_devices"]
+          ? ["coverage_percent", "devices_enrolled", "total_devices"]
           : systemKey === "LACdrop"
             ? ["adoption_percent", "parents_active", "total_parents", "pickup_requests"]
             : systemKey === "Toddle Parent"
               ? ["adoption_percent", "parents_logged_in", "total_parents"]
-              : systemKey === "Staff Attendance"
+              : systemKey === "Staff Biometric Attendance"
                 ? ["usage_percent", "staff_captured", "total_staff", "present_percent"]
                 : ["progress_percent"];
 
@@ -720,6 +712,28 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Weekly rollup failed" });
+  }
+});
+
+/* ---------------------------------------------------------------------
+   DELETE a weekly snapshot (e.g. added by mistake)
+------------------------------------------------------------------------ */
+app.post("/api/weekly/delete", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
+  try {
+    const { week_start } = req.body || {};
+    if (!week_start) return res.status(400).json({ error: "week_start is required" });
+
+    const { error } = await supabase
+      .from("weekly_reports")
+      .delete()
+      .eq("week_start", week_start);
+
+    if (error) return safeError(res, "weekly delete error:", error);
+
+    res.json({ ok: true, deleted: week_start });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Delete failed" });
   }
 });
 

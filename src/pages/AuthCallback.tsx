@@ -2,47 +2,62 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:10000";
+
+async function fetchRole(token: string): Promise<string> {
+  try {
+    const res = await fetch(`${API_BASE}/api/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return "STAFF";
+    const data = await res.json();
+    return typeof data?.role === "string" ? data.role.toUpperCase() : "STAFF";
+  } catch {
+    return "STAFF";
+  }
+}
+
+function homeFor(role: string) {
+  return role === "ADMIN" || role === "PRESIDENT" ? "/dashboard" : "/unauthorized";
+}
+
 export default function AuthCallback() {
   const nav = useNavigate();
 
   useEffect(() => {
     (async () => {
       try {
-        const href = window.location.href;
-        const url = new URL(href);
+        const url = new URL(window.location.href);
 
-        // 1) If we already have a session, just go in
+        // 1) Already signed in
         const { data: existing } = await supabase.auth.getSession();
         if (existing?.session) {
-          nav("/dashboard", { replace: true });
+          const role = await fetchRole(existing.session.access_token);
+          nav(homeFor(role), { replace: true });
           return;
         }
 
-        // 2) PKCE/OAuth code flow
+        // 2) OAuth / PKCE code
         const code = url.searchParams.get("code");
         if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(href);
+          const { data, error } = await supabase.auth.exchangeCodeForSession(window.location.href);
           if (error) throw error;
-
-          nav("/dashboard", { replace: true });
+          const role = data.session ? await fetchRole(data.session.access_token) : "STAFF";
+          nav(homeFor(role), { replace: true });
           return;
         }
 
-        // 3) Token-hash magic link flow (works cross-device IF your link includes token_hash)
+        // 3) Magic link
         const token_hash = url.searchParams.get("token_hash");
-        const type = url.searchParams.get("type"); // e.g. "magiclink"
+        const type = url.searchParams.get("type");
         if (token_hash && type) {
-          const { error } = await supabase.auth.verifyOtp({
-            token_hash,
-            type: type as any,
-          });
+          const { data, error } = await supabase.auth.verifyOtp({ token_hash, type: type as any });
           if (error) throw error;
-
-          nav("/dashboard", { replace: true });
+          const role = data.session ? await fetchRole(data.session.access_token) : "STAFF";
+          nav(homeFor(role), { replace: true });
           return;
         }
 
-        console.error("Auth callback error: missing code/token_hash params");
         nav("/login", { replace: true });
       } catch (e: any) {
         console.error("Auth callback error:", e?.message || e);
@@ -52,8 +67,9 @@ export default function AuthCallback() {
   }, [nav]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center text-gray-600">
-      Signing you in...
+    <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-gray-500">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-200 border-t-gray-600" />
+      <span className="text-sm">Signing you in…</span>
     </div>
   );
 }
