@@ -95,6 +95,13 @@ function resolvePct(sysKey: string, liveMap: Map<string, Record<string, MetricRo
   return typeof live === "number" ? clamp(live) : clamp(fallback);
 }
 
+// Auto-calculates status from live adoption percentage
+function pctStatus(pct: number): "STABLE" | "ATTENTION" | "CRITICAL" {
+  if (pct >= 80) return "STABLE";
+  if (pct >= 70) return "ATTENTION";
+  return "CRITICAL";
+}
+
 function rawPair(sysKey: string, sys: Record<string, MetricRow>) {
   const meta = sys[mainKey(sysKey)]?.meta;
   if (meta && typeof meta === "object") {
@@ -125,7 +132,7 @@ function rawPair(sysKey: string, sys: Record<string, MetricRow>) {
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status?: string }) {
+function StatusBadge({ status }: { status: "STABLE" | "ATTENTION" | "CRITICAL" }) {
   if (status === "CRITICAL")
     return <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">CRITICAL</span>;
   if (status === "ATTENTION")
@@ -146,6 +153,7 @@ function SystemCard({
   const snapCat        = snapshot.categories.find(c => c.name === sysKey);
   const sys            = liveMap.get(sysKey) || {};
   const pct            = resolvePct(sysKey, liveMap, snapCat?.focusPercent);
+  const status         = pctStatus(pct);   // auto-derived from live data
   const { a, b, lbl } = rawPair(sysKey, sys);
   const colour         = systemColour(sysKey);
   const logo           = SYSTEM_LOGO[sysKey] ?? null;
@@ -159,7 +167,7 @@ function SystemCard({
           <div className="flex flex-wrap items-center gap-2">
             {logo && <img src={logo} alt={sysKey} className="h-6 w-6 rounded object-contain" />}
             <h3 className="text-sm font-bold text-gray-900">{sysKey}</h3>
-            <StatusBadge status={snapCat?.status} />
+            <StatusBadge status={status} />
           </div>
           <p className="mt-1 text-xs text-gray-400">
             Updated: <span className="font-medium text-gray-500">{niceTimeAgo(lastUp)}</span>
@@ -239,20 +247,29 @@ export default function ExecutiveDashboard() {
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  const stableCount    = snapshot.categories.filter(c => c.status === "STABLE").length;
-  const attentionCount = snapshot.categories.filter(c => c.status === "ATTENTION").length;
-  const criticalCount  = snapshot.categories.filter(c => c.status === "CRITICAL").length;
-  const totalSystems   = snapshot.categories.length || 1;
+  // Live percentages for every tracked system (uses snapshot.categories for list)
+  const kpiKeys = useMemo(() => {
+    const fromSnap = snapshot.categories.map(c => c.name);
+    return fromSnap.length > 0
+      ? fromSnap
+      : ["MDM", "LACdrop", "Staff Biometric Attendance", "Toddle Parent"];
+  }, [snapshot.categories]);
 
-  const pctLAC    = resolvePct("LACdrop",                    liveMap, snapshot.categories.find(c => c.name === "LACdrop")?.focusPercent);
-  const pctStaff  = resolvePct("Staff Biometric Attendance", liveMap, snapshot.categories.find(c => c.name === "Staff Biometric Attendance")?.focusPercent);
-  const pctToddle = resolvePct("Toddle Parent",              liveMap, snapshot.categories.find(c => c.name === "Toddle Parent")?.focusPercent);
+  const livePcts = useMemo(() =>
+    kpiKeys.map(k => resolvePct(k, liveMap, snapshot.categories.find(c => c.name === k)?.focusPercent)),
+  [kpiKeys, liveMap, snapshot.categories]);
 
+  // Auto-derived status counts from live data using pct thresholds
+  const stableCount    = livePcts.filter(p => pctStatus(p) === "STABLE").length;
+  const attentionCount = livePcts.filter(p => pctStatus(p) === "ATTENTION").length;
+  const criticalCount  = livePcts.filter(p => pctStatus(p) === "CRITICAL").length;
+  const totalSystems   = kpiKeys.length;
+
+  // Option A: Digital Health = simple average of all 4 system adoptions
   const thisWeekOverall = useMemo(() => {
-    const stability   = Math.round((stableCount / totalSystems) * 100);
-    const adoptionAvg = Math.round((pctLAC + pctStaff + pctToddle) / 3);
-    return clamp(Math.round(stability * 0.6 + adoptionAvg * 0.4));
-  }, [stableCount, totalSystems, pctLAC, pctStaff, pctToddle]);
+    if (livePcts.length === 0) return 0;
+    return clamp(Math.round(livePcts.reduce((a, b) => a + b, 0) / livePcts.length));
+  }, [livePcts]);
 
   const lastWeekOverall = useMemo(() => {
     const v = (snapshot as any)?.metrics?.lastWeekOverallPercent;
@@ -264,9 +281,15 @@ export default function ExecutiveDashboard() {
   const wkLabel = fmtWeekLabel(weekStart, weekEnd) || snapshot.weekLabel;
 
   const allSystemKeys = useMemo(() => {
-    const fromSnap    = snapshot.categories.map(c => c.name);
-    const fromMetrics = Array.from(liveMap.keys()).filter(k => !fromSnap.includes(k));
-    return [...fromSnap, ...fromMetrics];
+    // If snapshot has categories, respect that list (add/remove via Updates is reflected here)
+    // Otherwise fall back to known defaults
+    const fromSnap = snapshot.categories.map(c => c.name);
+    const base = fromSnap.length > 0
+      ? fromSnap
+      : ["MDM", "LACdrop", "Staff Biometric Attendance", "Toddle Parent"];
+    // Include any live-only systems not in the snapshot
+    const extra = Array.from(liveMap.keys()).filter(k => !base.includes(k));
+    return [...base, ...extra];
   }, [snapshot.categories, liveMap]);
 
   if (loading) {

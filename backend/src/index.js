@@ -149,8 +149,35 @@ app.get("/api/weekly", authMiddleware, async (req, res) => {
       .from("weekly_reports")
       .select("id,week_start,week_end,snapshot_json,created_at");
 
-    if (week_start) q = q.eq("week_start", week_start);
-    else q = q.order("created_at", { ascending: false }).limit(1);
+    if (week_start) {
+      q = q.eq("week_start", week_start);
+    } else {
+      // Load the week that CONTAINS today, not just the most recently created row.
+      // This prevents a future week saved by mistake from overriding the current week.
+      const today = isoDate(new Date());
+      const { data: currentWeekData, error: cwErr } = await supabase
+        .from("weekly_reports")
+        .select("id,week_start,week_end,snapshot_json,created_at")
+        .lte("week_start", today)
+        .gte("week_end",   today)
+        .order("week_start", { ascending: false })
+        .limit(1);
+
+      if (cwErr) return safeError(res, "weekly current-week error:", cwErr);
+
+      // If no row spans today, fall back to the most recent past week
+      if (currentWeekData && currentWeekData.length > 0) {
+        const row = currentWeekData[0];
+        const snapshot = row.snapshot_json || null;
+        if (snapshot && row.week_start && row.week_end) {
+          snapshot.weekLabel = formatExecutiveWeekLabel(row.week_start, row.week_end);
+        }
+        return res.json({ id: row.id, week_start: row.week_start, week_end: row.week_end, created_at: row.created_at, snapshot });
+      }
+
+      // Fallback: most recent past week
+      q = q.lte("week_start", today).order("week_start", { ascending: false }).limit(1);
+    }
 
     const { data, error } = await q;
     if (error) return safeError(res, "weekly select error:", error);
@@ -562,16 +589,17 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
       return pickLatest(list);
     }
 
-    // status rules:
-    // - health_code=3 => CRITICAL
-    // - health_code=2 => ATTENTION
-    // else STABLE
+    // status rules: same thresholds as the frontend pctStatus()
+    // >=80 => STABLE, 70-79 => ATTENTION, <70 => CRITICAL
     function resolveStatus(systemKey) {
-      const hc = getLatestMetric(systemKey, "health_code");
-      const code = hc ? Number(hc.metric_value) : null;
-      if (code === 3) return "CRITICAL";
-      if (code === 2) return "ATTENTION";
-      return "STABLE";
+      let mainKey = "adoption_percent";
+      if (systemKey === "MDM") mainKey = "coverage_percent";
+      if (systemKey === "Staff Biometric Attendance") mainKey = "usage_percent";
+      const m = getLatestMetric(systemKey, mainKey);
+      const p = m ? pct(m.metric_value) : 0;
+      if (p >= 80) return "STABLE";
+      if (p >= 70) return "ATTENTION";
+      return "CRITICAL";
     }
 
     function buildCategory(systemKey) {
@@ -626,7 +654,8 @@ app.post("/api/weekly/rollup", authMiddleware, requireRole(["ADMIN"]), async (re
     const avgUserAdoption = pct(avg(userSystems.map((c) => c.focusPercent)));
 
     const stabilityPct = pct((operational / (totalSystems || 1)) * 100);
-    const overallPercent = pct(stabilityPct * 0.6 + avgUserAdoption * 0.4);
+    // Option A: Digital Health = simple average of ALL 4 systems
+    const overallPercent = pct(avg(categories.map((c) => c.focusPercent)));
 
     // prev week overallPercent (if exists)
     const lastWeekStart = new Date(`${week_start}T00:00:00Z`);

@@ -91,6 +91,13 @@ function currentMonthKey(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Same thresholds as ExecutiveDashboard pctStatus()
+function pctStatus(p: number): "STABLE" | "ATTENTION" | "CRITICAL" {
+  if (p >= 80) return "STABLE";
+  if (p >= 70) return "ATTENTION";
+  return "CRITICAL";
+}
+
 function deriveFromSnapshot(snap: WeeklySnapshot | null): {
   overallPct: number;
   stableCount: number;
@@ -99,17 +106,6 @@ function deriveFromSnapshot(snap: WeeklySnapshot | null): {
   systemPcts: Record<string, number>;
 } {
   const cats = snap?.categories || [];
-  const total = cats.length || 1;
-  const stable = cats.filter(c => c.status === "STABLE").length;
-  const hasCritical  = cats.some(c => c.status === "CRITICAL");
-  const hasAttention = cats.some(c => c.status === "ATTENTION");
-
-  const userCats = cats.filter(c => c.name !== "MDM");
-  const adoptAvg = Math.round(
-    userCats.reduce((s, c) => s + clamp(c.focusPercent), 0) / (userCats.length || 1)
-  );
-  const stabilityPct = Math.round((stable / total) * 100);
-  const overallPct   = clamp(Math.round(stabilityPct * 0.6 + adoptAvg * 0.4));
 
   // per-system pcts — check metrics block first, then focusPercent
   const systemPcts: Record<string, number> = {};
@@ -125,10 +121,22 @@ function deriveFromSnapshot(snap: WeeklySnapshot | null): {
     systemPcts[sys] = clamp(v);
   }
 
+  // Option A: Digital Health = simple average of all systems
+  const allPcts = Object.values(systemPcts);
+  const overallPct = allPcts.length
+    ? clamp(Math.round(allPcts.reduce((a, b) => a + b, 0) / allPcts.length))
+    : 0;
+
+  // Status auto-derived from pct thresholds (not stored status field)
+  const statuses = Object.values(systemPcts).map(pctStatus);
+  const hasCritical  = statuses.some(s => s === "CRITICAL");
+  const hasAttention = statuses.some(s => s === "ATTENTION");
+  const stableCount  = statuses.filter(s => s === "STABLE").length;
+
   return {
     overallPct,
-    stableCount: stable,
-    totalSystems: total,
+    stableCount,
+    totalSystems: CORE_SYSTEMS.length,
     status: hasCritical ? "CRITICAL" : hasAttention ? "ATTENTION" : "STABLE",
     systemPcts,
   };

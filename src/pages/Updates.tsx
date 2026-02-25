@@ -531,13 +531,18 @@ export default function Updates() {
       };
     });
 
-    const stableCount  = categories.filter(c => c.status === "STABLE").length;
-    const attentionCnt = categories.filter(c => c.status === "ATTENTION").length;
-    const criticalCnt  = categories.filter(c => c.status === "CRITICAL").length;
+    // Status auto-derived from pct thresholds (same as live dashboard)
+    // For backdate we allow manual status override since no live data exists —
+    // but we still use pct thresholds for the overall score
+    const pctStatus = (p: number) => p >= 80 ? "STABLE" : p >= 70 ? "ATTENTION" : "CRITICAL";
+    const stableCount  = categories.filter(c => pctStatus(c.focusPercent) === "STABLE").length;
+    const attentionCnt = categories.filter(c => pctStatus(c.focusPercent) === "ATTENTION").length;
+    const criticalCnt  = categories.filter(c => pctStatus(c.focusPercent) === "CRITICAL").length;
     const userCats     = categories.filter(c => c.name !== "MDM");
     const adoptAvg     = Math.round(userCats.reduce((s, c) => s + c.focusPercent, 0) / (userCats.length || 1));
     const stabilityPct = Math.round((stableCount / categories.length) * 100);
-    const overallPct   = Math.round(stabilityPct * 0.6 + adoptAvg * 0.4);
+    // Option A: Digital Health = simple average of all 4 systems
+    const overallPct   = Math.round(categories.reduce((s, c) => s + c.focusPercent, 0) / (categories.length || 1));
 
     const snap: WeeklySnapshot = {
       weekLabel:    "",   // backend overwrites this
