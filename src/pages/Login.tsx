@@ -54,10 +54,16 @@ export default function Login() {
     }
     try {
       setLoading(true);
+      // Hardcode the production callback URL so mobile email clients
+      // redirect correctly regardless of how the link is opened.
+      const callbackUrl = window.location.hostname === "localhost"
+        ? `${window.location.origin}/auth/callback`
+        : "https://www.londongschool.com/auth/callback";
+
       const { error } = await supabase.auth.signInWithOtp({
         email: cleanEmail,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: callbackUrl,
           shouldCreateUser: false,
         },
       });
@@ -78,9 +84,13 @@ export default function Login() {
     setErr(null); setMsg(null);
     try {
       setLoading(true);
+      const callbackUrl = window.location.hostname === "localhost"
+        ? `${window.location.origin}/auth/callback`
+        : "https://www.londongschool.com/auth/callback";
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
+        options: { redirectTo: callbackUrl },
       });
       if (error) throw error;
     } catch (e: any) {
