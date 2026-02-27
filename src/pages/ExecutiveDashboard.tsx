@@ -134,10 +134,10 @@ function rawPair(sysKey: string, sys: Record<string, MetricRow>) {
 
 function StatusBadge({ status }: { status: "STABLE" | "ATTENTION" | "CRITICAL" }) {
   if (status === "CRITICAL")
-    return <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">CRITICAL</span>;
+    return <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">At Risk</span>;
   if (status === "ATTENTION")
-    return <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">ATTENTION</span>;
-  return <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">STABLE</span>;
+    return <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">Needs Work</span>;
+  return <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">Stable</span>;
 }
 
 // ─── System Card ──────────────────────────────────────────────────────────────
@@ -398,6 +398,16 @@ export default function ExecutiveDashboard() {
     </div>
   );
 
+  const legend = (
+    <p className="text-center text-[11px] text-gray-300">
+      <span className="text-green-400 font-semibold">Stable</span> ≥80%
+      {" · "}
+      <span className="text-amber-400 font-semibold">Needs Work</span> 70–79%
+      {" · "}
+      <span className="text-red-400 font-semibold">At Risk</span> &lt;70%
+    </p>
+  );
+
   const footer = (
     <p className="pb-1 text-center text-xs text-gray-300">
       IT &amp; Digital Systems — London Academy Casablanca
@@ -417,6 +427,7 @@ export default function ExecutiveDashboard() {
       {kpiStrip}
       {liveMetrics}
       {alertsBlock}
+      {legend}
       {footer}
     </div>
   );

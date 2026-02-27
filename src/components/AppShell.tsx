@@ -2,20 +2,14 @@ import { NavLink } from "react-router-dom";
 import { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../contexts/AuthContext";
-import AvatarButton from "./AvatarButton";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const { role, session } = useAuth();
+  const { role } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Pull identity directly from the session already held in AuthContext.
   // No async call needed → no flicker. Session is populated before any
   // protected page renders, so this is always fresh by the time we get here.
-  const meta     = session?.user?.user_metadata ?? {};
-  const fullName = meta.full_name || meta.name || session?.user?.email?.split("@")[0] || "";
-  const email    = session?.user?.email ?? "";
-  const avatar   = meta.avatar_url ?? meta.picture ?? null;
-
   const logout = () => supabase.auth.signOut();
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -43,22 +37,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div className="sticky top-0 z-20 border-b border-gray-100 bg-white/90 backdrop-blur-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 md:px-6">
 
-          {/* User identity — reads synchronously from context, never flickers */}
-          <div className="flex items-center gap-3">
-            <AvatarButton src={avatar} size={36} />
-            <div className="hidden leading-tight sm:block">
-              {fullName ? (
-                <p className="text-sm font-semibold text-gray-800">{fullName}</p>
-              ) : (
-                // Skeleton shown only on very first load before session resolves
-                <div className="h-3.5 w-28 animate-pulse rounded bg-gray-100" />
-              )}
-              {email ? (
-                <p className="text-xs text-gray-400">{email}</p>
-              ) : (
-                <div className="mt-1 h-2.5 w-36 animate-pulse rounded bg-gray-100" />
-              )}
-            </div>
+          {/* LAC Logo */}
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/logo-school.png"
+              alt="London Academy Casablanca"
+              className="h-9 w-9 rounded-full object-cover"
+            />
+            <span className="hidden text-sm font-bold text-[#1a2e44] sm:block">
+              LAC Dashboard
+            </span>
           </div>
 
           {/* Desktop nav */}

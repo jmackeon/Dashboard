@@ -822,70 +822,66 @@ export default function Updates() {
               </div>
 
               {/* Active / Total helper — only for % metrics */}
-              {isPercent(mKey) && (
+              {isPercent(mKey) && mSystem === "LACdrop" && mSource === "API" && (
                 <div className="mt-4 rounded-xl border bg-[#F7F8FA] p-4">
-                  {/* LACdrop + API source → show Fetch button instead of manual calc */}
-                  {mSystem === "LACdrop" && mSource === "API" ? (
-                    <>
-                      <p className="text-xs font-semibold text-gray-700">Fetch live data from LACdrop</p>
-                      <p className="mt-0.5 text-xs text-gray-400">
-                        Pulls the latest adoption %, active parents, and total from the LACdrop system and fills the fields above. Review the values then click Save Metric.
-                      </p>
-                      <div className="mt-3">
-                        <button
-                          onClick={fetchFromLACdrop}
-                          disabled={syncingLAC}
-                          className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
-                        >
-                          {syncingLAC ? (
-                            <>
-                              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" />
-                              </svg>
-                              Fetching…
-                            </>
-                          ) : (
-                            <>
-                              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                                <path d="M21 3v5h-5" />
-                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                                <path d="M3 21v-5h5" />
-                              </svg>
-                              Fetch from LACdrop
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-xs font-semibold text-gray-700">
-                        Calculate % from Active / Total
-                      </p>
-                      <p className="mt-0.5 text-xs text-gray-400">
-                        Dashboard shows "503/523" when both are set.
-                      </p>
-                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                        <div>
-                          <Label>Active / enrolled</Label>
-                          <Input value={hActive} onChange={e => setHActive(e.target.value)} placeholder="503" />
-                        </div>
-                        <div>
-                          <Label>Total</Label>
-                          <Input value={hTotal} onChange={e => setHTotal(e.target.value)} placeholder="523" />
-                        </div>
-                        <div className="flex items-end">
-                          <button
-                            onClick={applyHelper}
-                            className="mt-1 w-full rounded-xl bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-                          >
-                            Calculate &amp; fill
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  )}
+                  <p className="text-xs font-semibold text-gray-700">Fetch live data from LACdrop</p>
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    Pulls the latest adoption %, active parents, and total from the LACdrop system and fills the fields above. Review the values then click Save Metric.
+                  </p>
+                  <div className="mt-3">
+                    <button
+                      onClick={fetchFromLACdrop}
+                      disabled={syncingLAC}
+                      className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {syncingLAC ? (
+                        <>
+                          <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" />
+                          </svg>
+                          Fetching…
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                            <path d="M21 3v5h-5" />
+                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                            <path d="M3 21v-5h5" />
+                          </svg>
+                          Fetch from LACdrop
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {isPercent(mKey) && !(mSystem === "LACdrop" && mSource === "API") && (
+                <div className="mt-4 rounded-xl border bg-[#F7F8FA] p-4">
+                  <p className="text-xs font-semibold text-gray-700">
+                    Calculate % from Active / Total
+                  </p>
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    Dashboard shows "503/523" when both are set.
+                  </p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <div>
+                      <Label>Active / enrolled</Label>
+                      <Input value={hActive} onChange={e => setHActive(e.target.value)} placeholder="503" />
+                    </div>
+                    <div>
+                      <Label>Total</Label>
+                      <Input value={hTotal} onChange={e => setHTotal(e.target.value)} placeholder="523" />
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        onClick={applyHelper}
+                        className="mt-1 w-full rounded-xl bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                      >
+                        Calculate &amp; fill
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1088,8 +1084,8 @@ export default function Updates() {
                           className="!mt-0 w-auto rounded-lg border-gray-200 bg-white py-1 text-xs font-semibold"
                         >
                           <option value="STABLE">Stable</option>
-                          <option value="ATTENTION">Attention</option>
-                          <option value="CRITICAL">Critical</option>
+                          <option value="ATTENTION">Needs Work</option>
+                          <option value="CRITICAL">At Risk</option>
                         </Select>
                       </div>
 
@@ -1202,8 +1198,8 @@ export default function Updates() {
                           <Label>Status</Label>
                           <Select value={c.status} onChange={e => updateCat(c.id, { status: e.target.value as HealthStatus })} className="bg-white">
                             <option value="STABLE">Stable</option>
-                            <option value="ATTENTION">Attention</option>
-                            <option value="CRITICAL">Critical</option>
+                            <option value="ATTENTION">Needs Work</option>
+                            <option value="CRITICAL">At Risk</option>
                           </Select>
                         </div>
                         <div>
@@ -1316,8 +1312,8 @@ export default function Updates() {
                     className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
                   >
                     <option value="STABLE">Stable</option>
-                    <option value="ATTENTION">Attention</option>
-                    <option value="CRITICAL">Critical</option>
+                    <option value="ATTENTION">Needs Work</option>
+                    <option value="CRITICAL">At Risk</option>
                   </select>
                 </div>
                 <div className="flex items-end">

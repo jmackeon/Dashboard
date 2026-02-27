@@ -127,17 +127,19 @@ function deriveFromSnapshot(snap: WeeklySnapshot | null): {
     ? clamp(Math.round(allPcts.reduce((a, b) => a + b, 0) / allPcts.length))
     : 0;
 
-  // Status auto-derived from pct thresholds (not stored status field)
-  const statuses = Object.values(systemPcts).map(pctStatus);
-  const hasCritical  = statuses.some(s => s === "CRITICAL");
-  const hasAttention = statuses.some(s => s === "ATTENTION");
-  const stableCount  = statuses.filter(s => s === "STABLE").length;
+  // stableCount = individual systems above 80% (for "X/4 systems stable" line)
+  const statuses   = Object.values(systemPcts).map(pctStatus);
+  const stableCount = statuses.filter(s => s === "STABLE").length;
+
+  // Week/month STATUS is derived from the OVERALL %, not the worst individual system.
+  // This prevents a single underperforming system from flagging an otherwise healthy week.
+  const weekStatus = pctStatus(overallPct);
 
   return {
     overallPct,
     stableCount,
     totalSystems: CORE_SYSTEMS.length,
-    status: hasCritical ? "CRITICAL" : hasAttention ? "ATTENTION" : "STABLE",
+    status: weekStatus,
     systemPcts,
   };
 }
@@ -155,8 +157,8 @@ function statusBg(s: WeekRow["status"]): string {
 }
 
 function statusLabel(s: WeekRow["status"]): string {
-  if (s === "CRITICAL")  return "Critical";
-  if (s === "ATTENTION") return "Attention";
+  if (s === "CRITICAL")  return "At Risk";
+  if (s === "ATTENTION") return "Needs Work";
   return "Stable";
 }
 
