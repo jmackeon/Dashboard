@@ -324,9 +324,10 @@ export default function Updates() {
   const [mMeta,   setMMeta]   = useState("");
   const [hActive, setHActive] = useState("");
   const [hTotal,  setHTotal]  = useState("");
-  const [savingM, setSavingM] = useState(false);
-  const [rolling, setRolling] = useState(false);
-  const [savingW, setSavingW] = useState(false);
+  const [savingM,    setSavingM]    = useState(false);
+  const [rolling,    setRolling]    = useState(false);
+  const [savingW,    setSavingW]    = useState(false);
+  const [syncingLAC, setSyncingLAC] = useState(false);
 
   // ── Custom preset management ──────────────────────────────────────────────
   const [customPresets, setCustomPresets] = useState<Record<string, { label: string; key: string }[]>>({});
@@ -455,6 +456,28 @@ export default function Updates() {
     if (!Number.isFinite(a) || !Number.isFinite(t) || t <= 0) return flash("Enter valid Active and Total numbers.", true);
     setMValue(String(clamp((a / t) * 100)));
     setMMeta(JSON.stringify({ active: a, total: t }));
+  }
+
+  // ── Sync from LACdrop API ─────────────────────────────────────────────────
+  async function syncLACdrop() {
+    try {
+      setSyncingLAC(true);
+      const res = await apiFetch<{
+        ok: boolean;
+        synced: { date: string; adoptionPct: number; parentsUsedApp: number; totalParents: number; adminOverridePct: number | null };
+      }>("/api/sync/lacdrop", { method: "POST" });
+      const s = res?.synced;
+      await refreshMetrics();
+      flash(
+        s
+          ? `✓ LACdrop synced: ${s.adoptionPct}% adoption (${s.parentsUsedApp}/${s.totalParents} parents) as of ${s.date}.`
+          : "✓ LACdrop sync complete."
+      );
+    } catch (e: any) {
+      flash(e?.message || "LACdrop sync failed.", true);
+    } finally {
+      setSyncingLAC(false);
+    }
   }
 
   // ── Weekly rollup (current) ───────────────────────────────────────────────
@@ -878,6 +901,47 @@ export default function Updates() {
                   </div>
                 </div>
               )}
+            </Card>
+
+            {/* LACdrop Live Sync */}
+            <Card>
+              <SectionTitle
+                step="Step 1b"
+                title="Sync LACdrop adoption from live data"
+                subtitle="Pulls the latest parent adoption % directly from the LACdrop system and saves it as today's metric. You can still override it manually using the form above."
+              />
+              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800 mb-4">
+                <p className="font-semibold">What this does</p>
+                <p className="mt-0.5 text-xs">Calls the LACdrop backend API → saves <code className="bg-blue-100 px-1 rounded">adoption_percent</code> for <strong>LACdrop</strong> into the database with <code className="bg-blue-100 px-1 rounded">source: API</code>. The Executive Dashboard will reflect the new figure within 30 seconds.</p>
+                <p className="mt-1.5 text-xs text-blue-600">To override: enter a manual value using Step 1 above after syncing — the manual entry for the same date will take priority on the next rollup.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={syncLACdrop}
+                  disabled={syncingLAC}
+                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {syncingLAC ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" />
+                      </svg>
+                      Syncing…
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                        <path d="M21 3v5h-5" />
+                        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                        <path d="M3 21v-5h5" />
+                      </svg>
+                      Sync from LACdrop
+                    </>
+                  )}
+                </button>
+                <p className="text-xs text-gray-400">Last sync visible in Stored Metrics above — look for LACdrop → adoption_percent with source "API"</p>
+              </div>
             </Card>
 
             {/* Weekly rollup */}

@@ -767,6 +767,119 @@ app.post("/api/weekly/delete", authMiddleware, requireRole(["ADMIN"]), async (re
 });
 
 /* ---------------------------------------------------------------------
+   LACdrop Sync (ADMIN only)
+   POST /api/sync/lacdrop
+   Calls the LACdrop external API, saves the result as a metric row
+   in system_metrics_daily for system_key="LACdrop".
+   A manual override saved on the same date in Updates.tsx will take
+   priority on the next rollup (pickLatest uses updated_at ordering).
+------------------------------------------------------------------------ */
+app.post("/api/sync/lacdrop", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
+  try {
+    const lacdropUrl = process.env.LACDROP_API_URL;
+    const lacdropKey = process.env.LACDROP_API_KEY;
+
+    if (!lacdropUrl || !lacdropKey) {
+      return res.status(500).json({
+        error: "LACDROP_API_URL or LACDROP_API_KEY not configured on this server.",
+      });
+    }
+
+    // Call LACdrop's external adoption endpoint
+    const endpoint = `${lacdropUrl}/api/admin/adoption/rolling/external`;
+    let lacdropData;
+    try {
+      const r = await fetch(endpoint, {
+        headers: { Authorization: `ApiKey ${lacdropKey}` },
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        return res.status(502).json({
+          error: `LACdrop API returned ${r.status}: ${text.slice(0, 200)}`,
+        });
+      }
+      const json = await r.json();
+      lacdropData = json?.data ?? json; // handle { data: {...} } or flat response
+    } catch (fetchErr) {
+      return res.status(502).json({
+        error: `Could not reach LACdrop backend: ${fetchErr?.message}`,
+      });
+    }
+
+    // Extract fields — adjust keys if LACdrop returns different names
+    const adoptionPct      = Number(lacdropData?.parentsUsingPct   ?? lacdropData?.adoption_percent ?? 0);
+    const parentsUsedApp   = Number(lacdropData?.parentsUsedApp    ?? lacdropData?.parents_active   ?? 0);
+    const totalParents     = Number(lacdropData?.totalEligibleParents ?? lacdropData?.total_parents ?? 0);
+    const adminOverridePct = lacdropData?.adminOverridePct != null
+      ? Number(lacdropData.adminOverridePct)
+      : null;
+
+    // Use today as the metric date
+    const today = isoDate(new Date());
+
+    // Build meta block so the dashboard can show "187/309" style counts
+    const meta = {
+      source: "LACdrop API sync",
+      active: parentsUsedApp || null,
+      total:  totalParents   || null,
+      syncedAt: new Date().toISOString(),
+      ...(adminOverridePct != null ? { adminOverridePct } : {}),
+    };
+
+    // Save adoption_percent
+    const { error: upsertErr } = await supabase
+      .from("system_metrics_daily")
+      .upsert(
+        {
+          date:         today,
+          system_key:   "LACdrop",
+          metric_key:   "adoption_percent",
+          metric_value: adoptionPct,
+          source:       "API",
+          meta,
+          created_by:   req.auth.userId,
+          updated_at:   new Date().toISOString(),
+        },
+        { onConflict: "date,system_key,metric_key" }
+      );
+
+    if (upsertErr) return safeError(res, "lacdrop sync upsert error:", upsertErr);
+
+    // Also save parents_active and total_parents if available
+    if (parentsUsedApp > 0) {
+      await supabase.from("system_metrics_daily").upsert(
+        { date: today, system_key: "LACdrop", metric_key: "parents_active",
+          metric_value: parentsUsedApp, source: "API", meta: null,
+          created_by: req.auth.userId, updated_at: new Date().toISOString() },
+        { onConflict: "date,system_key,metric_key" }
+      );
+    }
+    if (totalParents > 0) {
+      await supabase.from("system_metrics_daily").upsert(
+        { date: today, system_key: "LACdrop", metric_key: "total_parents",
+          metric_value: totalParents, source: "API", meta: null,
+          created_by: req.auth.userId, updated_at: new Date().toISOString() },
+        { onConflict: "date,system_key,metric_key" }
+      );
+    }
+
+    res.json({
+      ok: true,
+      synced: {
+        date:          today,
+        adoptionPct,
+        parentsUsedApp,
+        totalParents,
+        adminOverridePct,
+      },
+    });
+  } catch (e) {
+    console.error("lacdrop sync error:", e);
+    res.status(500).json({ error: "LACdrop sync failed" });
+  }
+});
+
+/* ---------------------------------------------------------------------
    Error handler
 ------------------------------------------------------------------------ */
 app.use((err, _req, res, _next) => {
