@@ -458,23 +458,26 @@ export default function Updates() {
     setMMeta(JSON.stringify({ active: a, total: t }));
   }
 
-  // ── Sync from LACdrop API ─────────────────────────────────────────────────
-  async function syncLACdrop() {
+  // ── Fetch from LACdrop API — fills the form, does NOT save automatically ────
+  async function fetchFromLACdrop() {
     try {
       setSyncingLAC(true);
       const res = await apiFetch<{
         ok: boolean;
         synced: { date: string; adoptionPct: number; parentsUsedApp: number; totalParents: number; adminOverridePct: number | null };
-      }>("/api/sync/lacdrop", { method: "POST" });
+      }>("/api/sync/lacdrop", { method: "POST", body: JSON.stringify({ previewOnly: true }) });
       const s = res?.synced;
-      await refreshMetrics();
-      flash(
-        s
-          ? `✓ LACdrop synced: ${s.adoptionPct}% adoption (${s.parentsUsedApp}/${s.totalParents} parents) as of ${s.date}.`
-          : "✓ LACdrop sync complete."
-      );
+      if (s) {
+        setMValue(String(s.adoptionPct));
+        if (s.parentsUsedApp) setHActive(String(s.parentsUsedApp));
+        if (s.totalParents)   setHTotal(String(s.totalParents));
+        setMSource("API");
+        setMSystem("LACdrop");
+        setMKey("adoption_percent");
+        flash(`✓ Fetched from LACdrop: ${s.adoptionPct}% (${s.parentsUsedApp}/${s.totalParents} parents). Review and click Save Metric.`);
+      }
     } catch (e: any) {
-      flash(e?.message || "LACdrop sync failed.", true);
+      flash(e?.message || "Failed to fetch from LACdrop.", true);
     } finally {
       setSyncingLAC(false);
     }
@@ -821,30 +824,68 @@ export default function Updates() {
               {/* Active / Total helper — only for % metrics */}
               {isPercent(mKey) && (
                 <div className="mt-4 rounded-xl border bg-[#F7F8FA] p-4">
-                  <p className="text-xs font-semibold text-gray-700">
-                    Calculate % from Active / Total
-                  </p>
-                  <p className="mt-0.5 text-xs text-gray-400">
-                    Dashboard shows "503/523" when both are set.
-                  </p>
-                  <div className="mt-3 grid gap-3 md:grid-cols-3">
-                    <div>
-                      <Label>Active / enrolled</Label>
-                      <Input value={hActive} onChange={e => setHActive(e.target.value)} placeholder="503" />
-                    </div>
-                    <div>
-                      <Label>Total</Label>
-                      <Input value={hTotal} onChange={e => setHTotal(e.target.value)} placeholder="523" />
-                    </div>
-                    <div className="flex items-end">
-                      <button
-                        onClick={applyHelper}
-                        className="mt-1 w-full rounded-xl bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-                      >
-                        Calculate &amp; fill
-                      </button>
-                    </div>
-                  </div>
+                  {/* LACdrop + API source → show Fetch button instead of manual calc */}
+                  {mSystem === "LACdrop" && mSource === "API" ? (
+                    <>
+                      <p className="text-xs font-semibold text-gray-700">Fetch live data from LACdrop</p>
+                      <p className="mt-0.5 text-xs text-gray-400">
+                        Pulls the latest adoption %, active parents, and total from the LACdrop system and fills the fields above. Review the values then click Save Metric.
+                      </p>
+                      <div className="mt-3">
+                        <button
+                          onClick={fetchFromLACdrop}
+                          disabled={syncingLAC}
+                          className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {syncingLAC ? (
+                            <>
+                              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" />
+                              </svg>
+                              Fetching…
+                            </>
+                          ) : (
+                            <>
+                              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                                <path d="M21 3v5h-5" />
+                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                                <path d="M3 21v-5h5" />
+                              </svg>
+                              Fetch from LACdrop
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs font-semibold text-gray-700">
+                        Calculate % from Active / Total
+                      </p>
+                      <p className="mt-0.5 text-xs text-gray-400">
+                        Dashboard shows "503/523" when both are set.
+                      </p>
+                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                        <div>
+                          <Label>Active / enrolled</Label>
+                          <Input value={hActive} onChange={e => setHActive(e.target.value)} placeholder="503" />
+                        </div>
+                        <div>
+                          <Label>Total</Label>
+                          <Input value={hTotal} onChange={e => setHTotal(e.target.value)} placeholder="523" />
+                        </div>
+                        <div className="flex items-end">
+                          <button
+                            onClick={applyHelper}
+                            className="mt-1 w-full rounded-xl bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                          >
+                            Calculate &amp; fill
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -901,47 +942,6 @@ export default function Updates() {
                   </div>
                 </div>
               )}
-            </Card>
-
-            {/* LACdrop Live Sync */}
-            <Card>
-              <SectionTitle
-                step="Step 1b"
-                title="Sync LACdrop adoption from live data"
-                subtitle="Pulls the latest parent adoption % directly from the LACdrop system and saves it as today's metric. You can still override it manually using the form above."
-              />
-              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800 mb-4">
-                <p className="font-semibold">What this does</p>
-                <p className="mt-0.5 text-xs">Calls the LACdrop backend API → saves <code className="bg-blue-100 px-1 rounded">adoption_percent</code> for <strong>LACdrop</strong> into the database with <code className="bg-blue-100 px-1 rounded">source: API</code>. The Executive Dashboard will reflect the new figure within 30 seconds.</p>
-                <p className="mt-1.5 text-xs text-blue-600">To override: enter a manual value using Step 1 above after syncing — the manual entry for the same date will take priority on the next rollup.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  onClick={syncLACdrop}
-                  disabled={syncingLAC}
-                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {syncingLAC ? (
-                    <>
-                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" />
-                      </svg>
-                      Syncing…
-                    </>
-                  ) : (
-                    <>
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                        <path d="M21 3v5h-5" />
-                        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                        <path d="M3 21v-5h5" />
-                      </svg>
-                      Sync from LACdrop
-                    </>
-                  )}
-                </button>
-                <p className="text-xs text-gray-400">Last sync visible in Stored Metrics above — look for LACdrop → adoption_percent with source "API"</p>
-              </div>
             </Card>
 
             {/* Weekly rollup */}

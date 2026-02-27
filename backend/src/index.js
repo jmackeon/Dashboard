@@ -814,8 +814,18 @@ app.post("/api/sync/lacdrop", authMiddleware, requireRole(["ADMIN"]), async (req
       ? Number(lacdropData.adminOverridePct)
       : null;
 
+    // If previewOnly=true, just return the fetched data without saving
+    const previewOnly = req.body?.previewOnly === true;
+
     // Use today as the metric date
     const today = isoDate(new Date());
+
+    if (previewOnly) {
+      return res.json({
+        ok: true,
+        synced: { date: today, adoptionPct, parentsUsedApp, totalParents, adminOverridePct },
+      });
+    }
 
     // Build meta block so the dashboard can show "187/309" style counts
     const meta = {
