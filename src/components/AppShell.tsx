@@ -1,16 +1,30 @@
 import { NavLink } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useActivity } from "../hooks/useActivity";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../contexts/AuthContext";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const { role } = useAuth();
+  const { role, session } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Pull identity directly from the session already held in AuthContext.
   // No async call needed → no flicker. Session is populated before any
   // protected page renders, so this is always fresh by the time we get here.
-  const logout = () => supabase.auth.signOut();
+  const { log } = useActivity();
+
+  // Log sign-in once per session
+  useEffect(() => {
+    if (session?.user?.email) {
+      log("SIGN_IN", `via ${session.user.app_metadata?.provider || "email"}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id]);
+
+  const logout = async () => {
+    await log("SIGN_OUT");
+    supabase.auth.signOut();
+  };
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     isActive

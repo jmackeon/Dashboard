@@ -9,6 +9,7 @@ import {
   type HealthStatus,
   type WeeklySnapshot,
 } from "../lib/reportStore";
+import { useActivity } from "../hooks/useActivity";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -301,10 +302,11 @@ function DeleteWeekCard({ flash }: { flash: (msg: string, isErr?: boolean) => vo
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-type TabId = "thisweek" | "backdate" | "advanced";
+type TabId = "thisweek" | "backdate" | "advanced" | "activity";
 
 export default function Updates() {
   const [tab, setTab] = useState<TabId>("thisweek");
+  const { log } = useActivity();
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const [snapshot,      setSnapshot]      = useState<WeeklySnapshot>(getDefaultSnapshot());
@@ -443,6 +445,7 @@ export default function Updates() {
       });
       await refreshMetrics();
       flash(`✓ Saved ${mKey} for ${mSystem}.`);
+      log("METRIC_SAVED", `${mSystem} · ${mKey} = ${mValue}`);
       setMValue(""); setMNote(""); setMMeta(""); setHActive(""); setHTotal("");
     } catch (e: any) {
       flash(e?.message || "Failed to save metric.", true);
@@ -475,6 +478,7 @@ export default function Updates() {
         setMSystem("LACdrop");
         setMKey("adoption_percent");
         flash(`✓ Fetched from LACdrop: ${s.adoptionPct}% (${s.parentsUsedApp}/${s.totalParents} parents). Review and click Save Metric.`);
+        log("LACDROP_SYNCED", `${s.adoptionPct}% adoption · ${s.parentsUsedApp}/${s.totalParents} parents`);
       }
     } catch (e: any) {
       flash(e?.message || "Failed to fetch from LACdrop.", true);
@@ -493,6 +497,7 @@ export default function Updates() {
       if (res?.week_start) setWeekStart(res.week_start);
       if (res?.week_end)   setWeekEnd(res.week_end);
       flash("✓ Rollup complete. History updated.");
+      log("ROLLUP_RUN", `Week ${weekStart} – ${weekEnd}`);
     } catch (e: any) {
       flash(e?.message || "Rollup failed.", true);
     } finally {
@@ -507,6 +512,7 @@ export default function Updates() {
       setSnapshot(next);
       await apiFetch("/api/weekly", { method: "POST", body: JSON.stringify({ week_start: weekStart, week_end: weekEnd, snapshot: next }) });
       flash("✓ Snapshot saved.");
+      log("SNAPSHOT_SAVED", `Current week snapshot saved`);
     } catch (e: any) {
       flash(e?.message || "Failed to save.", true);
     } finally {
@@ -523,6 +529,7 @@ export default function Updates() {
         { method: "POST", body: JSON.stringify({ date: bdRollupAnchor }) }
       );
       flash(`✓ Rolled up ${res.week_start} → ${res.week_end}. Visible in History now.`);
+        log("WEEK_BACKDATED", `${res.week_start} → ${res.week_end}`);
     } catch (e: any) {
       flash(e?.message || "Rollup failed.", true);
     } finally {
@@ -737,6 +744,7 @@ export default function Updates() {
           <Tab active={tab === "thisweek"}  onClick={() => setTab("thisweek")}>This Week</Tab>
           <Tab active={tab === "backdate"}  onClick={() => setTab("backdate")}>Backdate Past Weeks</Tab>
           <Tab active={tab === "advanced"}  onClick={() => setTab("advanced")}>Advanced</Tab>
+          <Tab active={tab === "activity"}  onClick={() => setTab("activity")}>Activity Log</Tab>
         </div>
 
         {/* ══════════════════════════════════════════════════════════
@@ -1084,8 +1092,8 @@ export default function Updates() {
                           className="!mt-0 w-auto rounded-lg border-gray-200 bg-white py-1 text-xs font-semibold"
                         >
                           <option value="STABLE">Stable</option>
-                          <option value="ATTENTION">Needs Work</option>
-                          <option value="CRITICAL">At Risk</option>
+                          <option value="ATTENTION">Attention</option>
+                          <option value="CRITICAL">Critical</option>
                         </Select>
                       </div>
 
@@ -1198,8 +1206,8 @@ export default function Updates() {
                           <Label>Status</Label>
                           <Select value={c.status} onChange={e => updateCat(c.id, { status: e.target.value as HealthStatus })} className="bg-white">
                             <option value="STABLE">Stable</option>
-                            <option value="ATTENTION">Needs Work</option>
-                            <option value="CRITICAL">At Risk</option>
+                            <option value="ATTENTION">Attention</option>
+                            <option value="CRITICAL">Critical</option>
                           </Select>
                         </div>
                         <div>
@@ -1312,8 +1320,8 @@ export default function Updates() {
                     className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
                   >
                     <option value="STABLE">Stable</option>
-                    <option value="ATTENTION">Needs Work</option>
-                    <option value="CRITICAL">At Risk</option>
+                    <option value="ATTENTION">Attention</option>
+                    <option value="CRITICAL">Critical</option>
                   </select>
                 </div>
                 <div className="flex items-end">
@@ -1351,7 +1359,205 @@ export default function Updates() {
           </div>
         )}
 
+
+        {tab === "activity" && (
+          <ActivityLog />
+        )}
       </div>
     </AppShell>
+  );
+}
+
+// ─── Activity Log Component ───────────────────────────────────────────────────
+
+type LogEntry = {
+  id: string;
+  user_email: string;
+  user_role: string;
+  action: string;
+  detail: string | null;
+  created_at: string;
+};
+
+const ACTION_LABELS: Record<string, { label: string; color: string }> = {
+  SIGN_IN:        { label: "Sign In",        color: "bg-green-100 text-green-700" },
+  SIGN_OUT:       { label: "Sign Out",       color: "bg-gray-100 text-gray-600" },
+  PAGE_VIEW:      { label: "Page View",      color: "bg-blue-50 text-blue-600" },
+  METRIC_SAVED:   { label: "Metric Saved",   color: "bg-purple-100 text-purple-700" },
+  ROLLUP_RUN:     { label: "Rollup Run",     color: "bg-indigo-100 text-indigo-700" },
+  SNAPSHOT_SAVED: { label: "Snapshot Saved", color: "bg-teal-100 text-teal-700" },
+  LACDROP_SYNCED: { label: "LACdrop Synced", color: "bg-cyan-100 text-cyan-700" },
+  WEEK_DELETED:   { label: "Week Deleted",   color: "bg-red-100 text-red-700" },
+  WEEK_BACKDATED: { label: "Backdated",      color: "bg-orange-100 text-orange-700" },
+};
+
+function formatTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function ActivityLog() {
+  const [logs,    setLogs]    = useState<LogEntry[]>([]);
+  const [total,   setTotal]   = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState("");
+  const [filterAction, setFilterAction] = useState("");
+  const [filterEmail,  setFilterEmail]  = useState("");
+  const [offset, setOffset] = useState(0);
+  const LIMIT = 50;
+
+  async function fetchLogs(off = 0, action = filterAction, email = filterEmail) {
+    try {
+      setLoading(true);
+      setError("");
+      const params = new URLSearchParams({ limit: String(LIMIT), offset: String(off) });
+      if (action) params.set("action", action);
+      if (email)  params.set("email",  email);
+      const data = await apiFetch<{ logs: LogEntry[]; total: number }>(
+        `/api/activity?${params}`
+      );
+      setLogs(data.logs ?? []);
+      setTotal(data.total ?? 0);
+      setOffset(off);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load activity log.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchLogs(0); }, []);
+
+  function applyFilters() { fetchLogs(0, filterAction, filterEmail); }
+  function clearFilters()  { setFilterAction(""); setFilterEmail(""); fetchLogs(0, "", ""); }
+
+  return (
+    <Card>
+      <SectionTitle
+        title="Activity Log"
+        subtitle="Sign-ins, metric updates, rollups and other key actions across the dashboard."
+      />
+
+      {/* Filters */}
+      <div className="mb-4 flex flex-wrap gap-3">
+        <select
+          value={filterAction}
+          onChange={e => setFilterAction(e.target.value)}
+          className="rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+        >
+          <option value="">All actions</option>
+          {Object.entries(ACTION_LABELS).map(([v, { label }]) => (
+            <option key={v} value={v}>{label}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={filterEmail}
+          onChange={e => setFilterEmail(e.target.value)}
+          placeholder="Filter by email…"
+          className="rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+        />
+        <button
+          onClick={applyFilters}
+          className="rounded-xl bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+        >
+          Apply
+        </button>
+        {(filterAction || filterEmail) && (
+          <button
+            onClick={clearFilters}
+            className="rounded-xl border px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50"
+          >
+            Clear
+          </button>
+        )}
+        <button
+          onClick={() => fetchLogs(offset)}
+          className="ml-auto rounded-xl border px-3 py-2 text-sm text-gray-400 hover:bg-gray-50"
+          title="Refresh"
+        >
+          ↻ Refresh
+        </button>
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="space-y-2">
+          {[...Array(8)].map((_, i) => (
+            <div key={i} className="h-10 animate-pulse rounded-xl bg-gray-100" />
+          ))}
+        </div>
+      ) : error ? (
+        <p className="text-sm text-red-500">{error}</p>
+      ) : logs.length === 0 ? (
+        <p className="text-sm text-gray-400">No activity recorded yet.</p>
+      ) : (
+        <>
+          <p className="mb-3 text-xs text-gray-400">{total} total entries</p>
+          <div className="overflow-x-auto rounded-xl border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-gray-50 text-left text-xs font-semibold text-gray-500">
+                  <th className="px-4 py-2.5">When</th>
+                  <th className="px-4 py-2.5">User</th>
+                  <th className="px-4 py-2.5">Action</th>
+                  <th className="px-4 py-2.5">Detail</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {logs.map(entry => {
+                  const meta = ACTION_LABELS[entry.action] ?? { label: entry.action, color: "bg-gray-100 text-gray-600" };
+                  return (
+                    <tr key={entry.id} className="hover:bg-gray-50">
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs text-gray-400">
+                        {formatTime(entry.created_at)}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <p className="font-medium text-gray-800">{entry.user_email}</p>
+                        <p className="text-[10px] text-gray-400">{entry.user_role}</p>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${meta.color}`}>
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-gray-500">
+                        {entry.detail ?? <span className="text-gray-300">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {total > LIMIT && (
+            <div className="mt-4 flex items-center justify-between text-sm text-gray-500">
+              <span>Showing {offset + 1}–{Math.min(offset + LIMIT, total)} of {total}</span>
+              <div className="flex gap-2">
+                <button
+                  disabled={offset === 0}
+                  onClick={() => fetchLogs(offset - LIMIT)}
+                  className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-40 hover:bg-gray-50"
+                >
+                  ← Prev
+                </button>
+                <button
+                  disabled={offset + LIMIT >= total}
+                  onClick={() => fetchLogs(offset + LIMIT)}
+                  className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-40 hover:bg-gray-50"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }

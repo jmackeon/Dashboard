@@ -890,6 +890,73 @@ app.post("/api/sync/lacdrop", authMiddleware, requireRole(["ADMIN"]), async (req
 });
 
 /* ---------------------------------------------------------------------
+   Activity Log
+   POST /api/activity        — log an action (any auth'd user)
+   GET  /api/activity        — fetch log (ADMIN only)
+------------------------------------------------------------------------ */
+
+// Helper used internally by other endpoints too
+async function logActivity({ userEmail, userRole, action, detail }) {
+  try {
+    await supabase.from("dashboard_activity_log").insert({
+      user_email: userEmail,
+      user_role:  userRole  || "UNKNOWN",
+      action,
+      detail:     detail    || null,
+    });
+  } catch (e) {
+    console.error("logActivity failed:", e?.message);
+  }
+}
+
+// POST /api/activity — called by frontend on sign-in, sign-out, page views, actions
+app.post("/api/activity", authMiddleware, async (req, res) => {
+  try {
+    const { action, detail } = req.body ?? {};
+    if (!action) return res.status(400).json({ error: "action required" });
+
+    await logActivity({
+      userEmail: req.auth.email,
+      userRole:  req.auth.role,
+      action:    String(action).slice(0, 100),
+      detail:    detail ? String(detail).slice(0, 500) : null,
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/activity error:", e);
+    res.status(500).json({ error: "Failed to log activity" });
+  }
+});
+
+// GET /api/activity — ADMIN only, paginated, filterable
+app.get("/api/activity", authMiddleware, requireRole(["ADMIN"]), async (req, res) => {
+  try {
+    const limit  = Math.min(Number(req.query.limit)  || 100, 500);
+    const offset = Number(req.query.offset) || 0;
+    const email  = req.query.email  || null;
+    const action = req.query.action || null;
+
+    let query = supabase
+      .from("dashboard_activity_log")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (email)  query = query.eq("user_email", email);
+    if (action) query = query.eq("action", action);
+
+    const { data, error, count } = await query;
+    if (error) return safeError(res, "activity log fetch:", error);
+
+    res.json({ logs: data, total: count });
+  } catch (e) {
+    console.error("GET /api/activity error:", e);
+    res.status(500).json({ error: "Failed to fetch activity log" });
+  }
+});
+
+/* ---------------------------------------------------------------------
    Error handler
 ------------------------------------------------------------------------ */
 app.use((err, _req, res, _next) => {

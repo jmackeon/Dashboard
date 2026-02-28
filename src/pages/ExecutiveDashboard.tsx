@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import { apiFetch } from "../lib/api";
+import { useActivity } from "../hooks/useActivity";
 import { getDefaultSnapshot, type WeeklySnapshot } from "../lib/reportStore";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -134,10 +135,10 @@ function rawPair(sysKey: string, sys: Record<string, MetricRow>) {
 
 function StatusBadge({ status }: { status: "STABLE" | "ATTENTION" | "CRITICAL" }) {
   if (status === "CRITICAL")
-    return <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">At Risk</span>;
+    return <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">CRITICAL</span>;
   if (status === "ATTENTION")
-    return <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">Needs Work</span>;
-  return <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">Stable</span>;
+    return <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">ATTENTION</span>;
+  return <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">STABLE</span>;
 }
 
 // ─── System Card ──────────────────────────────────────────────────────────────
@@ -204,6 +205,10 @@ function SystemCard({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ExecutiveDashboard() {
+  const { log } = useActivity();
+
+  // Log page view once on mount
+  useEffect(() => { log("PAGE_VIEW", "Executive Dashboard"); }, []);
   const [snapshot,      setSnapshot]      = useState<WeeklySnapshot>(getDefaultSnapshot());
   const [weekStart,     setWeekStart]     = useState<string | null>(null);
   const [weekEnd,       setWeekEnd]       = useState<string | null>(null);
@@ -247,23 +252,19 @@ export default function ExecutiveDashboard() {
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  // Live percentages for every tracked system (uses snapshot.categories for list)
-  const kpiKeys = useMemo(() => {
-    const fromSnap = snapshot.categories.map(c => c.name);
-    return fromSnap.length > 0
-      ? fromSnap
-      : ["MDM", "LACdrop", "Staff Biometric Attendance", "Toddle Parent"];
-  }, [snapshot.categories]);
+  // All system keys for KPI calculation
+  const allKpiKeys = ["MDM", "LACdrop", "Staff Biometric Attendance", "Toddle Parent"];
 
+  // Live percentages for every system
   const livePcts = useMemo(() =>
-    kpiKeys.map(k => resolvePct(k, liveMap, snapshot.categories.find(c => c.name === k)?.focusPercent)),
-  [kpiKeys, liveMap, snapshot.categories]);
+    allKpiKeys.map(k => resolvePct(k, liveMap, snapshot.categories.find(c => c.name === k)?.focusPercent)),
+  [liveMap, snapshot.categories]);
 
-  // Auto-derived status counts from live data using pct thresholds
+  // Auto-derived status counts from live data
   const stableCount    = livePcts.filter(p => pctStatus(p) === "STABLE").length;
   const attentionCount = livePcts.filter(p => pctStatus(p) === "ATTENTION").length;
   const criticalCount  = livePcts.filter(p => pctStatus(p) === "CRITICAL").length;
-  const totalSystems   = kpiKeys.length;
+  const totalSystems   = allKpiKeys.length;
 
   // Option A: Digital Health = simple average of all 4 system adoptions
   const thisWeekOverall = useMemo(() => {
@@ -281,16 +282,11 @@ export default function ExecutiveDashboard() {
   const wkLabel = fmtWeekLabel(weekStart, weekEnd) || snapshot.weekLabel;
 
   const allSystemKeys = useMemo(() => {
-    // If snapshot has categories, respect that list (add/remove via Updates is reflected here)
-    // Otherwise fall back to known defaults
-    const fromSnap = snapshot.categories.map(c => c.name);
-    const base = fromSnap.length > 0
-      ? fromSnap
-      : ["MDM", "LACdrop", "Staff Biometric Attendance", "Toddle Parent"];
-    // Include any live-only systems not in the snapshot
-    const extra = Array.from(liveMap.keys()).filter(k => !base.includes(k));
-    return [...base, ...extra];
-  }, [snapshot.categories, liveMap]);
+    // Known systems first (fixed order), then any additional live-only systems
+    const known   = ["MDM", "LACdrop", "Staff Biometric Attendance", "Toddle Parent"];
+    const extra   = Array.from(liveMap.keys()).filter(k => !known.includes(k));
+    return [...known, ...extra];
+  }, [liveMap]);
 
   if (loading) {
     return (
@@ -398,16 +394,6 @@ export default function ExecutiveDashboard() {
     </div>
   );
 
-  const legend = (
-    <p className="text-center text-[11px] text-gray-300">
-      <span className="text-green-400 font-semibold">Stable</span> ≥80%
-      {" · "}
-      <span className="text-amber-400 font-semibold">Needs Work</span> 70–79%
-      {" · "}
-      <span className="text-red-400 font-semibold">At Risk</span> &lt;70%
-    </p>
-  );
-
   const footer = (
     <p className="pb-1 text-center text-xs text-gray-300">
       IT &amp; Digital Systems — London Academy Casablanca
@@ -427,7 +413,6 @@ export default function ExecutiveDashboard() {
       {kpiStrip}
       {liveMetrics}
       {alertsBlock}
-      {legend}
       {footer}
     </div>
   );

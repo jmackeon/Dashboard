@@ -14,6 +14,7 @@ import { Line } from "react-chartjs-2";
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import { apiFetch } from "../lib/api";
+import { useActivity } from "../hooks/useActivity";
 import type { WeeklySnapshot } from "../lib/reportStore";
 
 ChartJS.register(LineElement, BarElement, CategoryScale, LinearScale, PointElement, Tooltip, Legend, Filler);
@@ -127,19 +128,17 @@ function deriveFromSnapshot(snap: WeeklySnapshot | null): {
     ? clamp(Math.round(allPcts.reduce((a, b) => a + b, 0) / allPcts.length))
     : 0;
 
-  // stableCount = individual systems above 80% (for "X/4 systems stable" line)
-  const statuses   = Object.values(systemPcts).map(pctStatus);
-  const stableCount = statuses.filter(s => s === "STABLE").length;
-
-  // Week/month STATUS is derived from the OVERALL %, not the worst individual system.
-  // This prevents a single underperforming system from flagging an otherwise healthy week.
-  const weekStatus = pctStatus(overallPct);
+  // Status auto-derived from pct thresholds (not stored status field)
+  const statuses = Object.values(systemPcts).map(pctStatus);
+  const hasCritical  = statuses.some(s => s === "CRITICAL");
+  const hasAttention = statuses.some(s => s === "ATTENTION");
+  const stableCount  = statuses.filter(s => s === "STABLE").length;
 
   return {
     overallPct,
     stableCount,
     totalSystems: CORE_SYSTEMS.length,
-    status: weekStatus,
+    status: hasCritical ? "CRITICAL" : hasAttention ? "ATTENTION" : "STABLE",
     systemPcts,
   };
 }
@@ -157,8 +156,8 @@ function statusBg(s: WeekRow["status"]): string {
 }
 
 function statusLabel(s: WeekRow["status"]): string {
-  if (s === "CRITICAL")  return "At Risk";
-  if (s === "ATTENTION") return "Needs Work";
+  if (s === "CRITICAL")  return "Critical";
+  if (s === "ATTENTION") return "Attention";
   return "Stable";
 }
 
@@ -379,6 +378,10 @@ function MonthCard({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function History() {
+  const { log } = useActivity();
+
+  // Log page view once on mount
+  useEffect(() => { log("PAGE_VIEW", "History"); }, []);
   const [rows,    setRows]    = useState<WeekRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
